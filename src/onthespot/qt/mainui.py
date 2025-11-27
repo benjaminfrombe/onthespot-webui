@@ -575,6 +575,9 @@ class MainWindow(QMainWindow):
                         download_queue[local_id]['gui']['status_label'].setText(self.tr("Waiting"))
                         download_queue[local_id]['gui']["btn"]['cancel'].show()
                         download_queue[local_id]['gui']["btn"]['retry'].hide()
+                        # Clear tried accounts to allow retry with any account
+                        if 'tried_accounts' in download_queue[local_id]:
+                            download_queue[local_id]['tried_accounts'] = set()
                     row_count -= 1
                 self.update_table_visibility()
 

@@ -229,6 +229,9 @@ def retry_items():
             if item["item_status"] in ("Failed", "Cancelled"):
                 download_queue[local_id]['item_status'] = 'Waiting'
                 download_queue[local_id]['available'] = True
+                # Clear tried accounts to allow retry with any account
+                if 'tried_accounts' in download_queue[local_id]:
+                    download_queue[local_id]['tried_accounts'] = set()
     return jsonify(success=True)
 
 
@@ -266,6 +269,9 @@ def retry_item(local_id):
         if local_id in download_queue:
             download_queue[local_id]['item_status'] = 'Waiting'
             download_queue[local_id]['available'] = True
+            # Clear tried accounts to allow retry with any account
+            if 'tried_accounts' in download_queue[local_id]:
+                download_queue[local_id]['tried_accounts'] = set()
     return jsonify(success=True)
 
 

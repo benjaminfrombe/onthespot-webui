@@ -57,6 +57,9 @@ class DownloadActionsButtons(QWidget):
         download_queue[self.local_id]['item_status'] = "Waiting"
         download_queue[self.local_id]['gui']['status_label'].setText(self.tr("Waiting"))
         download_queue[self.local_id]['gui']['progress_bar'].setValue(0)
+        # Clear tried accounts to allow retry with any account
+        if 'tried_accounts' in download_queue[self.local_id]:
+            download_queue[self.local_id]['tried_accounts'] = set()
         self.retry_btn.hide()
         self.cancel_btn.show()
 

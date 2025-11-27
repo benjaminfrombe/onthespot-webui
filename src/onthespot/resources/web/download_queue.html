@@ -198,7 +198,7 @@
         .col-album { width: 15%; min-width: 100px; }
         .col-by { width: 12%; min-width: 80px; }
         .col-service { width: 10%; min-width: 90px; }
-        .col-status { width: 12%; min-width: 100px; }
+        .col-status { width: 12%; min-width: 100px; text-align: center; }
         .col-progress { width: 15%; min-width: 120px; }
         .col-action { width: 10%; min-width: 80px; text-align: right; }
 
@@ -267,6 +267,7 @@
             display: flex;
             gap: 4px;
             flex-wrap: nowrap;
+            justify-content: flex-end;
         }
 
         .action-cell .download-action-button {
@@ -415,7 +416,7 @@
             /* Mobile column widths - redistribute space without hidden columns */
             .col-track { width: 50px; }
             .col-name { width: auto; }
-            .col-status { width: 100px; }
+            .col-status { width: 100px; text-align: center; }
             .col-action { width: 80px; text-align: right; }
 
             /* Make name column take available space */

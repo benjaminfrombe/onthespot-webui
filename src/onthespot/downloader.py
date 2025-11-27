@@ -126,6 +126,17 @@ class DownloadWorker(QObject):
                 indices.append(idx)
         return indices
 
+    def _get_account_uuid_from_token(self, service, token):
+        """Get the UUID of the account that owns this token"""
+        if token is None:
+            return None
+        for account in account_pool:
+            if account.get('service') == service:
+                account_token = account.get('login', {}).get('session')
+                if account_token is token or account_token == token:
+                    return account['uuid']
+        return None
+
     def _try_get_spotify_stream(self, item, item_id, item_type, token, quality, tried_accounts=None):
         """
         Try to get a Spotify stream, with fallback to other accounts if one fails.
@@ -265,7 +276,25 @@ class DownloadWorker(QObject):
                 item['item_status'] = "Downloading"
                 self.update_progress(item, self.tr("Downloading") if self.gui else "Downloading", 1)
 
-                token = get_account_token(item_service, rotate=config.get("rotate_active_account_number"))
+                # Initialize tried_accounts if not present
+                if 'tried_accounts' not in item:
+                    item['tried_accounts'] = set()
+
+                # Get account token, excluding already-tried accounts
+                token = get_account_token(
+                    item_service,
+                    rotate=config.get("rotate_active_account_number"),
+                    exclude_accounts=item.get('tried_accounts', set())
+                )
+
+                # If no account is available (all have been tried), reset and try again
+                if token is None and item.get('tried_accounts'):
+                    logger.info(f"All accounts tried for {item_service}, resetting tried_accounts")
+                    item['tried_accounts'] = set()
+                    token = get_account_token(item_service, rotate=config.get("rotate_active_account_number"))
+
+                # Track current account UUID for failure handling
+                item['current_account_uuid'] = self._get_account_uuid_from_token(item_service, token)
 
                 try:
                     item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
@@ -279,6 +308,12 @@ class DownloadWorker(QObject):
                     logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                     item['item_status'] = "Failed"
                     self.update_progress(item, self.tr("Failed") if self.gui else "Failed", 0)
+
+                    # Track failed account and try different one on retry
+                    if item.get('current_account_uuid'):
+                        item['tried_accounts'].add(item['current_account_uuid'])
+                        logger.info(f"Added account {item['current_account_uuid']} to tried_accounts. Total tried: {len(item['tried_accounts'])}")
+
                     logger.info(f"DEBUG item_path from format_item_path: {item_path}")
                     self.readd_item_to_download_queue(item)
                     continue
@@ -514,6 +549,12 @@ class DownloadWorker(QObject):
                             logger.info(f"Deezer download attempts failed: {file.status_code}")
                             item['item_status'] = "Failed"
                             self.update_progress(item, self.tr("Failed") if self.gui else "Failed", 0)
+
+                            # Track failed account and try different one on retry
+                            if item.get('current_account_uuid'):
+                                item['tried_accounts'].add(item['current_account_uuid'])
+                                logger.info(f"Added account {item['current_account_uuid']} to tried_accounts. Total tried: {len(item['tried_accounts'])}")
+
                             self.readd_item_to_download_queue(item)
 
                     elif item_service in ("soundcloud", "youtube_music"):
@@ -779,6 +820,12 @@ class DownloadWorker(QObject):
                     logger.info(f"Download failed: {item}, Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                     item['item_status'] = 'Failed'
                     self.update_progress(item, self.tr("Failed") if self.gui else "Failed", 0)
+
+                    # Track failed account and try different one on retry
+                    if item.get('current_account_uuid'):
+                        item['tried_accounts'].add(item['current_account_uuid'])
+                        logger.info(f"Added account {item['current_account_uuid']} to tried_accounts. Total tried: {len(item['tried_accounts'])}")
+
                     self.readd_item_to_download_queue(item)
                     continue
 
@@ -872,6 +919,11 @@ class DownloadWorker(QObject):
                 if item['item_status'] != "Cancelled":
                     item['item_status'] = "Failed"
                     self.update_progress(item, self.tr("Failed") if self.gui else "Failed", 0)
+
+                    # Track failed account and try different one on retry
+                    if item.get('current_account_uuid'):
+                        item['tried_accounts'].add(item['current_account_uuid'])
+                        logger.info(f"Added account {item['current_account_uuid']} to tried_accounts. Total tried: {len(item['tried_accounts'])}")
                 else:
                     self.update_progress(item, self.tr("Cancelled") if self.gui else "Cancelled", 0)
 

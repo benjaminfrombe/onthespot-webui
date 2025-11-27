@@ -49,18 +49,45 @@ class FillAccountPool(QThread):
         self.finished.emit()
 
 
-def get_account_token(item_service, rotate=False):
+def get_account_token(item_service, rotate=False, exclude_accounts=None):
+    """
+    Get an account token for the specified service.
+
+    Args:
+        item_service: The service name (e.g., 'spotify', 'deezer')
+        rotate: Whether to rotate to next account
+        exclude_accounts: Set of account UUIDs to exclude from selection
+
+    Returns:
+        Account token or None
+    """
     if item_service in ('bandcamp', 'youtube_music', 'generic'):
         return
+
+    if exclude_accounts is None:
+        exclude_accounts = set()
+
     parsing_index = config.get('active_account_number')
-    if item_service == account_pool[parsing_index]['service'] and not rotate:
+
+    # Check if current account is valid and not excluded
+    if (item_service == account_pool[parsing_index]['service'] and
+        not rotate and
+        account_pool[parsing_index]['uuid'] not in exclude_accounts):
         return globals()[f"{item_service}_get_token"](parsing_index)
     else:
+        # Find next available account that's not excluded
         for i in range(parsing_index + 1, parsing_index + len(account_pool) + 1):
             index = i % len(account_pool)
-            if item_service == account_pool[index]['service']:
+            if (item_service == account_pool[index]['service'] and
+                account_pool[index]['uuid'] not in exclude_accounts and
+                account_pool[index].get('active', True)):
                 if config.get("rotate_active_account_number"):
                     logger.debug(f"Returning {account_pool[index]['service']} account number {index}: {account_pool[index]['uuid']}")
                     config.set('active_account_number', index)
                     config.save()
                 return globals()[f"{item_service}_get_token"](index)
+
+        # If all accounts are excluded, log warning and return None
+        if exclude_accounts:
+            logger.warning(f"No available {item_service} accounts found (all have been tried)")
+        return None
