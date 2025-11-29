@@ -30,12 +30,17 @@ def plex_request_pin():
     Returns dict with 'id', 'code', and 'url' or None on error
     """
     try:
+        client_id = get_plex_client_identifier()
         headers = {
             'X-Plex-Product': PLEX_PRODUCT_NAME,
             'X-Plex-Version': PLEX_VERSION,
-            'X-Plex-Client-Identifier': get_plex_client_identifier(),
+            'X-Plex-Client-Identifier': client_id,
             'Accept': 'application/json'
         }
+
+        logger.info(f"Requesting Plex PIN with client identifier: {client_id}")
+        logger.debug(f"Request headers: {headers}")
+        logger.debug(f"Request URL: {PLEX_TV_URL}/api/v2/pins")
 
         response = requests.post(
             f'{PLEX_TV_URL}/api/v2/pins',
@@ -44,12 +49,16 @@ def plex_request_pin():
             timeout=10
         )
 
+        logger.info(f"Plex PIN request response status: {response.status_code}")
+        logger.debug(f"Response headers: {dict(response.headers)}")
+
         if response.status_code == 201:
             data = response.json()
+            logger.debug(f"Response body: {data}")
             pin_id = data.get('id')
             pin_code = data.get('code')
 
-            logger.info(f"Plex PIN requested: {pin_code}")
+            logger.info(f"Plex PIN requested successfully: {pin_code}")
 
             return {
                 'id': pin_id,
@@ -58,10 +67,12 @@ def plex_request_pin():
             }
         else:
             logger.error(f"Failed to request Plex PIN: {response.status_code}")
+            logger.error(f"Response body: {response.text}")
             return None
 
     except Exception as e:
         logger.error(f"Error requesting Plex PIN: {str(e)}")
+        logger.exception("Full traceback:")
         return None
 
 
@@ -71,16 +82,23 @@ def plex_check_pin(pin_id):
     Returns auth token if authorized, None if not yet authorized, False on error
     """
     try:
+        client_id = get_plex_client_identifier()
         headers = {
-            'X-Plex-Client-Identifier': get_plex_client_identifier(),
+            'X-Plex-Client-Identifier': client_id,
             'Accept': 'application/json'
         }
+
+        logger.debug(f"Checking PIN {pin_id} with client identifier: {client_id}")
+        logger.debug(f"Request headers: {headers}")
 
         response = requests.get(
             f'{PLEX_TV_URL}/api/v2/pins/{pin_id}',
             headers=headers,
             timeout=10
         )
+
+        logger.debug(f"PIN check response status: {response.status_code}")
+        logger.debug(f"Response body: {response.text}")
 
         if response.status_code == 200:
             data = response.json()
@@ -91,13 +109,16 @@ def plex_check_pin(pin_id):
                 return auth_token
             else:
                 # Not yet authorized
+                logger.debug("PIN not yet authorized")
                 return None
         else:
             logger.error(f"Failed to check Plex PIN: {response.status_code}")
+            logger.error(f"Response body: {response.text}")
             return False
 
     except Exception as e:
         logger.error(f"Error checking Plex PIN: {str(e)}")
+        logger.exception("Full traceback:")
         return False
 
 
@@ -107,11 +128,14 @@ def plex_get_user_info(token):
     Returns dict with user info or None on error
     """
     try:
+        client_id = get_plex_client_identifier()
         headers = {
             'X-Plex-Token': token,
-            'X-Plex-Client-Identifier': get_plex_client_identifier(),
+            'X-Plex-Client-Identifier': client_id,
             'Accept': 'application/json'
         }
+
+        logger.debug(f"Getting user info with client identifier: {client_id}")
 
         response = requests.get(
             f'{PLEX_TV_URL}/api/v2/user',
@@ -119,8 +143,11 @@ def plex_get_user_info(token):
             timeout=10
         )
 
+        logger.debug(f"User info response status: {response.status_code}")
+
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"Successfully retrieved user info for: {data.get('username')}")
             return {
                 'username': data.get('username'),
                 'email': data.get('email'),
@@ -128,10 +155,12 @@ def plex_get_user_info(token):
             }
         else:
             logger.error(f"Failed to get user info: {response.status_code}")
+            logger.error(f"Response body: {response.text}")
             return None
 
     except Exception as e:
         logger.error(f"Error getting user info: {str(e)}")
+        logger.exception("Full traceback:")
         return None
 
 
@@ -141,11 +170,14 @@ def plex_get_servers(token):
     Returns list of servers or None on error
     """
     try:
+        client_id = get_plex_client_identifier()
         headers = {
             'X-Plex-Token': token,
-            'X-Plex-Client-Identifier': get_plex_client_identifier(),
+            'X-Plex-Client-Identifier': client_id,
             'Accept': 'application/json'
         }
+
+        logger.debug(f"Getting servers with client identifier: {client_id}")
 
         response = requests.get(
             f'{PLEX_TV_URL}/api/v2/resources',
@@ -153,6 +185,8 @@ def plex_get_servers(token):
             params={'includeHttps': 1, 'includeRelay': 0},
             timeout=10
         )
+
+        logger.debug(f"Get servers response status: {response.status_code}")
 
         if response.status_code == 200:
             data = response.json()
@@ -181,10 +215,12 @@ def plex_get_servers(token):
             return servers
         else:
             logger.error(f"Failed to get Plex servers: {response.status_code}")
+            logger.error(f"Response body: {response.text}")
             return None
 
     except Exception as e:
         logger.error(f"Error getting Plex servers: {str(e)}")
+        logger.exception("Full traceback:")
         return None
 
 
