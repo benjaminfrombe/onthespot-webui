@@ -16,11 +16,24 @@ PLEX_VERSION = '1.0'
 # Get or generate a unique client identifier (UUID format required by Plex)
 def get_plex_client_identifier():
     client_id = config.get('plex_client_identifier')
-    if not client_id:
+
+    # Validate that the client_id is a valid UUID
+    # If it's not valid (e.g., old 'onthespot-plex-integration' string), regenerate it
+    is_valid_uuid = False
+    if client_id:
+        try:
+            uuid.UUID(client_id)
+            is_valid_uuid = True
+        except (ValueError, AttributeError):
+            logger.warning(f"Invalid Plex client identifier found: {client_id}. Regenerating...")
+            is_valid_uuid = False
+
+    if not client_id or not is_valid_uuid:
         client_id = str(uuid.uuid4())
         config.set('plex_client_identifier', client_id)
         config.save()
         logger.info(f"Generated new Plex client identifier: {client_id}")
+
     return client_id
 
 
