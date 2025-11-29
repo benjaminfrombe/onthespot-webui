@@ -274,6 +274,10 @@ class DownloadWorker(QObject):
                     if item_service == 'youtube_music' and item.get('parent_category') == 'album':
                         item_metadata.update({'track_number': item['playlist_number']})
 
+                    # Use playlist position for playlists instead of album track number
+                    if item.get('parent_category') == 'playlist':
+                        item_metadata.update({'track_number': item['playlist_number']})
+
                     item_path = format_item_path(item, item_metadata)
                 except (Exception, KeyError) as e:
                     logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
