@@ -22,7 +22,13 @@ from .api.tidal import tidal_get_track_metadata
 from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account
 from .api.generic import generic_add_account
-from .api.plex import plex_api
+try:
+    from .api.plex import plex_api
+    PLEX_AVAILABLE = True
+except Exception as e:
+    print(f"WARNING: Failed to import Plex API: {e}")
+    PLEX_AVAILABLE = False
+    plex_api = None
 from .downloader import DownloadWorker, RetryWorker
 from .otsconfig import cache_dir, config_dir, config
 from .parse_item import parsingworker, parse_url
@@ -358,6 +364,9 @@ def clear_cache():
 @login_required
 def plex_playlists():
     """Display the playlist import page"""
+    logger.info("=== Plex playlists route accessed ===")
+    if not PLEX_AVAILABLE:
+        return jsonify(success=False, error="Plex API not available"), 500
     logger.debug("=== Loading Plex playlists page ===")
     config_path = os.path.join(config_dir(), 'otsconfig.json')
     with open(config_path, 'r') as config_file:
@@ -465,6 +474,12 @@ def main():
         logger.info(f'Found cached download queue at {cached_file_path}, appending items to download queue...')
         get_search_results(cached_file_path)
         os.remove(cached_file_path)
+
+    # Log registered routes for debugging
+    logger.info("=== Registered Routes ===")
+    for rule in app.url_map.iter_rules():
+        logger.info(f"  {rule.rule} -> {rule.endpoint}")
+    logger.info("========================")
 
     app.run(host=args.host, port=args.port, debug=args.debug)
 
