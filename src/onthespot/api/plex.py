@@ -37,7 +37,7 @@ class PlexAPI:
             return {
                 'pin_id': data['id'],
                 'pin_code': data['code'],
-                'auth_url': f"https://app.plex.tv/auth#?clientID={self.CLIENT_IDENTIFIER}&code={data['code']}&context[device][product]=OnTheSpot"
+                'auth_url': f"https://app.plex.tv/auth#?clientID={self.CLIENT_IDENTIFIER}&code={data['code']}"
             }
         except Exception as e:
             logger.error(f"Failed to request PIN: {str(e)}")
