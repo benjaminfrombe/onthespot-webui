@@ -684,8 +684,12 @@ def add_to_m3u_file(item, item_metadata):
         m3u_item_header = f"#EXTINF:{ext_length}, {EXTINF}"
         m3u_contents = m3u_file.readlines()
         if m3u_item_header not in [line.strip() for line in m3u_contents]:
+            # Use relative path from M3U file location to the audio file
+            # This ensures Plex can find the files regardless of absolute paths
+            m3u_dir = os.path.dirname(m3u_path)
+            relative_path = os.path.relpath(item['file_path'], m3u_dir)
             with open(m3u_path, 'a', encoding='utf-8') as m3u_file:
-                m3u_file.write(f"{m3u_item_header}\n{item['file_path']}\n")
+                m3u_file.write(f"{m3u_item_header}\n{relative_path}\n")
         else:
             logger.info(f"{item['file_path']} already exists in the M3U file.")
 
