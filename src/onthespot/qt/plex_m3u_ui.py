@@ -1,10 +1,14 @@
 import os
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+import time
+import webbrowser
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QTableWidget, QTableWidgetItem, QGroupBox,
                              QHeaderView, QComboBox, QScrollArea, QMessageBox, QFormLayout)
 from ..api.plex import (plex_test_connection, plex_get_library_sections,
-                        plex_import_m3u, plex_save_settings, plex_get_m3u_files)
+                        plex_import_m3u, plex_save_settings, plex_get_m3u_files,
+                        plex_request_pin, plex_check_pin, plex_get_user_info,
+                        plex_get_servers)
 from ..otsconfig import config
 from ..runtimedata import get_logger
 
@@ -46,6 +50,67 @@ class PlexImportWorker(QThread):
         self.finished.emit(success, filename)
 
 
+class PlexPinAuthWorker(QThread):
+    """Worker thread for Plex PIN authentication"""
+    pin_ready = pyqtSignal(str, str)  # PIN code, URL
+    auth_complete = pyqtSignal(str, object, object)  # Token, user info, servers
+    auth_failed = pyqtSignal(str)  # Error message
+
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.pin_id = None
+
+    def run(self):
+        try:
+            # Request PIN
+            pin_data = plex_request_pin()
+            if not pin_data:
+                self.auth_failed.emit("Failed to request PIN from Plex")
+                return
+
+            self.pin_id = pin_data['id']
+            self.pin_ready.emit(pin_data['code'], pin_data['url'])
+
+            # Poll for authorization (timeout after 5 minutes)
+            max_attempts = 60  # 60 attempts x 5 seconds = 5 minutes
+            attempts = 0
+
+            while self.running and attempts < max_attempts:
+                time.sleep(5)
+                attempts += 1
+
+                if not self.running:
+                    break
+
+                result = plex_check_pin(self.pin_id)
+
+                if result is False:
+                    # Error occurred
+                    self.auth_failed.emit("Error checking PIN status")
+                    return
+                elif result is not None:
+                    # Token received!
+                    token = result
+
+                    # Get user info and servers
+                    user_info = plex_get_user_info(token)
+                    servers = plex_get_servers(token)
+
+                    self.auth_complete.emit(token, user_info, servers)
+                    return
+
+            if attempts >= max_attempts:
+                self.auth_failed.emit("Authentication timeout - PIN expired")
+
+        except Exception as e:
+            logger.error(f"PIN auth error: {str(e)}")
+            self.auth_failed.emit(f"Error: {str(e)}")
+
+    def stop(self):
+        self.running = False
+
+
 def add_plex_settings_to_settings_tab(main_window):
     """
     Add Plex settings section to the settings scroll area
@@ -60,6 +125,18 @@ def add_plex_settings_to_settings_tab(main_window):
         plex_group = QGroupBox("Plex Settings")
         plex_group.setObjectName("gb_plex_settings")
         plex_layout = QVBoxLayout()
+
+        # Sign in with Plex button
+        signin_btn = QPushButton("🔗 Sign in with Plex")
+        signin_btn.setMinimumHeight(40)
+        signin_btn.clicked.connect(lambda: start_plex_signin(main_window))
+        plex_layout.addWidget(signin_btn)
+
+        # OR divider
+        divider_label = QLabel("— OR enter manually —")
+        divider_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        divider_label.setStyleSheet("color: rgba(255, 255, 255, 0.5); margin: 10px 0;")
+        plex_layout.addWidget(divider_label)
 
         # Server URL
         url_layout = QHBoxLayout()
@@ -326,6 +403,86 @@ def import_all_m3u_files(main_window):
     except Exception as e:
         logger.error(f"Error importing all M3U files: {str(e)}")
         main_window.show_popup_dialog(f"Error: {str(e)}")
+
+
+def start_plex_signin(main_window):
+    """Start Plex PIN authentication flow"""
+    try:
+        main_window.show_popup_dialog("Requesting PIN from Plex...", btn_hide=True)
+
+        worker = PlexPinAuthWorker()
+        worker.pin_ready.connect(lambda code, url: on_pin_ready(main_window, code, url))
+        worker.auth_complete.connect(lambda token, user, servers: on_auth_complete(main_window, token, user, servers))
+        worker.auth_failed.connect(lambda msg: on_auth_failed(main_window, msg))
+        worker.start()
+
+        # Store worker to prevent garbage collection
+        main_window._plex_pin_worker = worker
+
+    except Exception as e:
+        logger.error(f"Error starting Plex signin: {str(e)}")
+        main_window.show_popup_dialog(f"Error: {str(e)}")
+
+
+def on_pin_ready(main_window, pin_code, url):
+    """Handle PIN ready - show dialog and open browser"""
+    try:
+        # Open browser to Plex link page
+        webbrowser.open(url)
+
+        # Show PIN to user
+        msg = f"📌 Your Plex PIN Code:\n\n{pin_code}\n\n" \
+              f"A browser window has opened to plex.tv/link\n" \
+              f"Please enter the PIN code and authorize OnTheSpot.\n\n" \
+              f"Waiting for authorization..."
+
+        main_window.show_popup_dialog(msg, btn_hide=True)
+
+    except Exception as e:
+        logger.error(f"Error handling PIN ready: {str(e)}")
+
+
+def on_auth_complete(main_window, token, user_info, servers):
+    """Handle successful authentication"""
+    try:
+        # Save token
+        config.set('plex_token', token)
+
+        # Auto-select first server if available
+        if servers and len(servers) > 0:
+            config.set('plex_server_url', servers[0]['url'])
+            main_window.plex_server_url.setText(servers[0]['url'])
+
+        main_window.plex_token.setText(token)
+
+        # Get library sections and auto-select first music library
+        if servers and len(servers) > 0:
+            sections = plex_get_library_sections(servers[0]['url'], token)
+            if sections and len(sections) > 0:
+                config.set('plex_library_section_id', sections[0]['id'])
+                main_window.plex_library_section_id.setText(sections[0]['id'])
+
+        config.save()
+
+        # Build success message
+        username = user_info['username'] if user_info else 'User'
+        server_names = ', '.join([s['name'] for s in servers]) if servers else 'None'
+
+        msg = f"✓ Successfully signed in to Plex!\n\n" \
+              f"User: {username}\n" \
+              f"Servers: {server_names}\n\n" \
+              f"Settings have been saved automatically."
+
+        main_window.show_popup_dialog(msg)
+
+    except Exception as e:
+        logger.error(f"Error completing auth: {str(e)}")
+        main_window.show_popup_dialog(f"Authentication succeeded but error saving: {str(e)}")
+
+
+def on_auth_failed(main_window, message):
+    """Handle authentication failure"""
+    main_window.show_popup_dialog(f"✗ Plex authentication failed:\n\n{message}")
 
 
 def on_import_finished(main_window, success, filename):

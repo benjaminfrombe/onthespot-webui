@@ -23,7 +23,9 @@ from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_a
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account
 from .api.generic import generic_add_account
 from .api.plex import (plex_test_connection, plex_get_library_sections,
-                       plex_import_m3u, plex_get_m3u_files)
+                       plex_import_m3u, plex_get_m3u_files,
+                       plex_request_pin, plex_check_pin, plex_get_user_info,
+                       plex_get_servers)
 from .downloader import DownloadWorker, RetryWorker
 from .otsconfig import cache_dir, config_dir, config
 from .parse_item import parsingworker, parse_url
@@ -248,6 +250,54 @@ def api_plex_import_all():
             fail_count += 1
 
     return jsonify({'success': True, 'success_count': success_count, 'fail_count': fail_count})
+
+
+@app.route('/api/plex/request_pin', methods=['POST'])
+@login_required
+def api_plex_request_pin():
+    pin_data = plex_request_pin()
+    if pin_data:
+        return jsonify({'success': True, 'pin_id': pin_data['id'], 'pin_code': pin_data['code'], 'url': pin_data['url']})
+    else:
+        return jsonify({'success': False, 'message': 'Failed to request PIN'})
+
+
+@app.route('/api/plex/check_pin/<pin_id>')
+@login_required
+def api_plex_check_pin(pin_id):
+    result = plex_check_pin(pin_id)
+
+    if result is False:
+        return jsonify({'success': False, 'message': 'Error checking PIN'})
+    elif result is None:
+        return jsonify({'success': True, 'authorized': False})
+    else:
+        # Got token!
+        token = result
+        user_info = plex_get_user_info(token)
+        servers = plex_get_servers(token)
+
+        # Save token automatically
+        config.set('plex_token', token)
+
+        # Auto-select first server
+        if servers and len(servers) > 0:
+            config.set('plex_server_url', servers[0]['url'])
+
+            # Get library sections and auto-select first music library
+            sections = plex_get_library_sections(servers[0]['url'], token)
+            if sections and len(sections) > 0:
+                config.set('plex_library_section_id', sections[0]['id'])
+
+        config.save()
+
+        return jsonify({
+            'success': True,
+            'authorized': True,
+            'token': token,
+            'user': user_info,
+            'servers': servers
+        })
 
 
 @app.route('/api/search_results')
