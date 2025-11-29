@@ -255,11 +255,22 @@ def api_plex_import_all():
 @app.route('/api/plex/request_pin', methods=['POST'])
 @login_required
 def api_plex_request_pin():
-    pin_data = plex_request_pin()
-    if pin_data:
-        return jsonify({'success': True, 'pin_id': pin_data['id'], 'pin_code': pin_data['code'], 'url': pin_data['url']})
-    else:
-        return jsonify({'success': False, 'message': 'Failed to request PIN'})
+    logger.info("=== Plex PIN request endpoint called ===")
+    try:
+        pin_data = plex_request_pin()
+        logger.info(f"PIN data result: {pin_data}")
+        if pin_data:
+            result = {'success': True, 'pin_id': pin_data['id'], 'pin_code': pin_data['code'], 'url': pin_data['url']}
+            logger.info(f"Returning success response: {result}")
+            return jsonify(result)
+        else:
+            result = {'success': False, 'message': 'Failed to request PIN'}
+            logger.error(f"Returning failure response: {result}")
+            return jsonify(result)
+    except Exception as e:
+        logger.error(f"Exception in api_plex_request_pin: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({'success': False, 'message': f'Server error: {str(e)}'})
 
 
 @app.route('/api/plex/check_pin/<pin_id>')

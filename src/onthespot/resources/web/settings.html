@@ -1351,6 +1351,7 @@
         let plexPinInterval = null;
 
         function signInWithPlex() {
+            console.log('[Plex] Sign in button clicked');
             const statusDiv = document.getElementById('plex_pin_status');
             const messageDiv = document.getElementById('plex_pin_message');
 
@@ -1358,14 +1359,21 @@
             statusDiv.style.display = 'block';
             messageDiv.innerHTML = '🔄 Requesting PIN from Plex...';
 
+            console.log('[Plex] Making fetch request to /api/plex/request_pin');
+
             // Request PIN
             fetch('/api/plex/request_pin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('[Plex] Received response:', response.status, response.statusText);
+                return response.json();
+            })
             .then(data => {
+                console.log('[Plex] Parsed JSON data:', data);
                 if (data.success) {
+                    console.log('[Plex] PIN request successful:', data.pin_code);
                     // Open browser to Plex link page
                     window.open(data.url, '_blank');
 
@@ -1379,12 +1387,16 @@
                     // Start polling for authorization
                     startPlexPinPolling(data.pin_id);
                 } else {
+                    console.error('[Plex] PIN request failed:', data.message);
                     messageDiv.innerHTML = '✗ Failed to request PIN: ' + (data.message || 'Unknown error');
                     statusDiv.style.background = 'rgba(244, 67, 54, 0.2)';
                     statusDiv.style.borderColor = 'rgba(244, 67, 54, 0.5)';
                 }
             })
             .catch(error => {
+                console.error('[Plex] Fetch error:', error);
+                console.error('[Plex] Error message:', error.message);
+                console.error('[Plex] Error stack:', error.stack);
                 messageDiv.innerHTML = '✗ Error: ' + error.message;
                 statusDiv.style.background = 'rgba(244, 67, 54, 0.2)';
                 statusDiv.style.borderColor = 'rgba(244, 67, 54, 0.5)';
