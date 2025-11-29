@@ -358,109 +358,67 @@ def clear_cache():
 @login_required
 def plex_playlists():
     """Display the playlist import page"""
+    logger.debug("=== Loading Plex playlists page ===")
     config_path = os.path.join(config_dir(), 'otsconfig.json')
     with open(config_path, 'r') as config_file:
         config_data = json.load(config_file)
 
     # Get m3u directory from config
     m3u_formatter = config_data.get('m3u_path_formatter', './m3u/')
+    logger.debug(f"M3U formatter from config: {m3u_formatter}")
+
     # Remove any trailing / and filename patterns
     m3u_directory = m3u_formatter.rsplit('/', 1)[0] if '/' in m3u_formatter else './m3u'
+    logger.debug(f"M3U directory (relative): {m3u_directory}")
 
     # Expand the path to absolute path
     if m3u_directory.startswith('./'):
         m3u_directory = os.path.join(config_data.get('audio_download_path', './downloads'), m3u_directory[2:])
 
+    logger.debug(f"M3U directory (absolute): {m3u_directory}")
+    logger.debug(f"Directory exists: {os.path.exists(m3u_directory)}")
+
     # List all m3u files
     playlists = []
     if os.path.exists(m3u_directory):
-        for filename in os.listdir(m3u_directory):
+        files = os.listdir(m3u_directory)
+        logger.debug(f"Files in directory: {files}")
+        for filename in files:
             if filename.lower().endswith('.m3u') or filename.lower().endswith('.m3u8'):
                 full_path = os.path.join(m3u_directory, filename)
                 playlists.append({
                     'name': filename,
                     'path': full_path
                 })
+                logger.debug(f"Added playlist: {filename} -> {full_path}")
 
+    logger.info(f"Found {len(playlists)} playlists in {m3u_directory}")
     return render_template('plex_playlists.html', config=config_data, playlists=playlists, m3u_directory=m3u_directory)
-
-
-@app.route('/api/plex/set_server_url', methods=['POST'])
-@login_required
-def plex_set_server_url():
-    """Set the Plex server URL"""
-    data = request.json
-    server_url = data.get('server_url', 'http://127.0.0.1:32400')
-    config.set('plex_server_url', server_url)
-    config.save()
-    plex_api.server_url = server_url
-    return jsonify(success=True)
-
-
-@app.route('/api/plex/request_pin')
-@login_required
-def plex_request_pin():
-    """Request a PIN for Plex authentication"""
-    result = plex_api.request_pin()
-    if result:
-        return jsonify(success=True, **result)
-    return jsonify(success=False, error='Failed to request PIN')
-
-
-@app.route('/api/plex/check_pin/<pin_id>')
-@login_required
-def plex_check_pin(pin_id):
-    """Check if PIN has been authorized"""
-    token = plex_api.check_pin(pin_id)
-    if token:
-        return jsonify(success=True, authenticated=True)
-    return jsonify(success=True, authenticated=False)
-
-
-@app.route('/api/plex/disconnect', methods=['POST'])
-@login_required
-def plex_disconnect():
-    """Disconnect from Plex"""
-    plex_api.disconnect()
-    return jsonify(success=True)
-
-
-@app.route('/api/plex/libraries')
-@login_required
-def plex_get_libraries():
-    """Get all music libraries from Plex"""
-    libraries = plex_api.get_libraries()
-    if libraries is not None:
-        return jsonify(success=True, libraries=libraries)
-    return jsonify(success=False, error='Failed to get libraries')
-
-
-@app.route('/api/plex/set_library', methods=['POST'])
-@login_required
-def plex_set_library():
-    """Set the selected music library"""
-    data = request.json
-    library_id = data.get('library_id')
-    if library_id:
-        plex_api.set_library(library_id)
-        return jsonify(success=True)
-    return jsonify(success=False, error='No library ID provided')
 
 
 @app.route('/api/plex/import_playlist', methods=['POST'])
 @login_required
 def plex_import_playlist():
     """Import a playlist to Plex"""
+    logger.debug("=== Plex import playlist API called ===")
     data = request.json
     playlist_path = data.get('playlist_path')
 
+    logger.debug(f"Received playlist path: {playlist_path}")
+
     if not playlist_path:
+        logger.error("No playlist path provided")
         return jsonify(success=False, error='No playlist path provided')
 
     if not os.path.exists(playlist_path):
+        logger.error(f"Playlist file not found: {playlist_path}")
         return jsonify(success=False, error='Playlist file not found')
 
+    logger.info(f"Attempting to import playlist: {playlist_path}")
+    logger.debug(f"Plex config - Server: {plex_api.server_url}, Library: {plex_api.library_section_id}, Token: {'SET' if plex_api.auth_token else 'NOT SET'}")
+
     result = plex_api.upload_playlist(playlist_path)
+    logger.debug(f"Import result: {result}")
     return jsonify(**result)
 
 

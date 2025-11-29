@@ -1,9 +1,11 @@
 import requests
 import time
+import logging
 from ..otsconfig import config
 from ..runtimedata import get_logger
 
 logger = get_logger("api.plex")
+logger.setLevel(logging.DEBUG)
 
 
 class PlexAPI:
@@ -113,6 +115,12 @@ class PlexAPI:
 
     def upload_playlist(self, m3u_file_path):
         """Upload a playlist to Plex"""
+        logger.debug(f"=== Starting playlist upload ===")
+        logger.debug(f"M3U file path: {m3u_file_path}")
+        logger.debug(f"Server URL: {self.server_url}")
+        logger.debug(f"Library Section ID: {self.library_section_id}")
+        logger.debug(f"Auth token present: {bool(self.auth_token)}")
+
         if not self.auth_token:
             logger.error("No auth token available")
             return {'success': False, 'error': 'Not authenticated'}
@@ -128,20 +136,37 @@ class PlexAPI:
                 'X-Plex-Token': self.auth_token
             }
 
-            response = requests.post(
-                f"{self.server_url}/playlists/upload",
-                params=params
-            )
+            upload_url = f"{self.server_url}/playlists/upload"
+            logger.debug(f"Upload URL: {upload_url}")
+            logger.debug(f"Request params: sectionID={self.library_section_id}, path={m3u_file_path}")
+
+            logger.info(f"Sending POST request to Plex...")
+            response = requests.post(upload_url, params=params, timeout=30)
+
+            logger.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response headers: {dict(response.headers)}")
+            logger.debug(f"Response body: {response.text[:500]}")  # First 500 chars
 
             if response.status_code == 200:
-                logger.info(f"Successfully uploaded playlist: {m3u_file_path}")
+                logger.info(f"✓ Successfully uploaded playlist: {m3u_file_path}")
                 return {'success': True}
             else:
-                logger.error(f"Failed to upload playlist: {response.status_code} - {response.text}")
-                return {'success': False, 'error': f"HTTP {response.status_code}: {response.text}"}
+                error_msg = f"HTTP {response.status_code}: {response.text}"
+                logger.error(f"✗ Failed to upload playlist: {error_msg}")
+                return {'success': False, 'error': error_msg}
+        except requests.exceptions.Timeout:
+            error_msg = "Request timed out after 30 seconds"
+            logger.error(f"✗ {error_msg}")
+            return {'success': False, 'error': error_msg}
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Connection error: {str(e)}"
+            logger.error(f"✗ {error_msg}")
+            return {'success': False, 'error': error_msg}
         except Exception as e:
-            logger.error(f"Failed to upload playlist: {str(e)}")
-            return {'success': False, 'error': str(e)}
+            error_msg = f"Unexpected error: {str(e)}"
+            logger.error(f"✗ {error_msg}")
+            logger.exception("Full traceback:")
+            return {'success': False, 'error': error_msg}
 
     def disconnect(self):
         """Clear Plex authentication"""
