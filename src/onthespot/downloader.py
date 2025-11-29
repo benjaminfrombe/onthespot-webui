@@ -434,11 +434,18 @@ class DownloadWorker(QObject):
                                         if item['item_status'] == 'Cancelled':
                                            raise Exception("Download cancelled by user.")
 
-                                        # Check for stalled download
+                                        # Check for stalled download before read
                                         if time.time() - last_progress_time > stall_timeout:
                                             raise Exception(f"Download stalled (no progress for {stall_timeout}s), reconnecting...")
 
+                                        read_start_time = time.time()
                                         data = stream.input_stream.stream().read(config.get("download_chunk_size"))
+                                        read_duration = time.time() - read_start_time
+
+                                        # Check if read operation itself took too long (indicating blocking/stalling)
+                                        if read_duration > stall_timeout:
+                                            raise Exception(f"Download stalled (read blocked for {read_duration:.1f}s), reconnecting...")
+
                                         downloaded += len(data)
                                         if len(data) != 0:
                                             file.write(data)
