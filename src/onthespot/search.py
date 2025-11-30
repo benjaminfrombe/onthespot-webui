@@ -1,4 +1,5 @@
 import os
+import re
 from .accounts import get_account_token
 from .api.apple_music import apple_music_get_search_results
 from .api.bandcamp import bandcamp_get_search_results
@@ -15,6 +16,10 @@ from .runtimedata import account_pool, get_logger
 
 logger = get_logger("search")
 
+# Regex patterns for Spotify ID detection
+SPOTIFY_ID_REGEX = re.compile(r'^[0-9a-zA-Z]{22}$')
+SPOTIFY_URI_REGEX = re.compile(r'^spotify:(?P<type>track|album|artist|playlist|episode|show):(?P<id>[0-9a-zA-Z]{22})$')
+
 
 def get_search_results(search_term, content_types=None):
     if len(account_pool) <= 0:
@@ -23,6 +28,32 @@ def get_search_results(search_term, content_types=None):
     if search_term == '':
         logger.warning(f"Returning empty data as query is empty !")
         return False
+
+    # Check for Spotify URI format (spotify:type:id)
+    uri_match = re.match(SPOTIFY_URI_REGEX, search_term)
+    if uri_match:
+        spotify_type = uri_match.group('type')
+        spotify_id = uri_match.group('id')
+        # Convert episode/show to podcast_episode/podcast for internal use
+        if spotify_type == 'episode':
+            spotify_type = 'podcast_episode'
+        elif spotify_type == 'show':
+            spotify_type = 'podcast'
+        url = f"https://open.spotify.com/{uri_match.group('type')}/{spotify_id}"
+        logger.info(f"Detected Spotify URI format, converting to URL: {url}")
+        result = parse_url(url)
+        if result is False:
+            return False
+        return True
+
+    # Check for bare Spotify ID (22 alphanumeric characters) - default to playlist
+    if re.match(SPOTIFY_ID_REGEX, search_term):
+        url = f"https://open.spotify.com/playlist/{search_term}"
+        logger.info(f"Detected bare Spotify ID, assuming playlist: {url}")
+        result = parse_url(url)
+        if result is False:
+            return False
+        return True
 
     if search_term.startswith('https://') or search_term.startswith('http://'):
         logger.info(f"Search clicked with value with url {search_term}")
