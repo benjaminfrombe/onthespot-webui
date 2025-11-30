@@ -298,11 +298,11 @@ def spotify_re_init_session(account):
 
 def spotify_get_token(parsing_index):
     """
-    Get Spotify token with smart session recreation.
+    Get Spotify token with aggressive session recreation.
 
-    Only recreates session if it's been >5 minutes since last recreation
-    or if session is missing/invalid. This avoids excessive recreation
-    while still ensuring fresh sessions.
+    Recreates session if it's been >60 seconds since last recreation
+    or if session is missing/invalid. Aggressive 1-minute cooldown because
+    sessions go stale faster than expected and cause corrupted downloads.
     """
     import time
     username = account_pool[parsing_index].get('username', 'unknown')
@@ -312,8 +312,9 @@ def spotify_get_token(parsing_index):
     current_time = time.time()
     time_since_reset = current_time - last_session_time
 
-    # Cooldown period: only recreate if >5 minutes old or if session missing
-    COOLDOWN_SECONDS = 300  # 5 minutes
+    # Cooldown period: only recreate if >60 seconds old or if session missing
+    # Reduced from 5min to 1min because sessions go stale faster than expected
+    COOLDOWN_SECONDS = 60  # 1 minute
 
     try:
         token = account_pool[parsing_index]['login']['session']
