@@ -298,17 +298,41 @@ def spotify_re_init_session(account):
 
 def spotify_get_token(parsing_index):
     """
-    NUCLEAR OPTION: Always recreate session before returning token.
+    Get Spotify token with smart session recreation.
 
-    This ensures EVERY token retrieval gets a completely fresh session,
-    eliminating any possibility of using stale sessions.
+    Only recreates session if it's been >5 minutes since last recreation
+    or if session is missing/invalid. This avoids excessive recreation
+    while still ensuring fresh sessions.
     """
+    import time
     username = account_pool[parsing_index].get('username', 'unknown')
-    logger.debug(f"Getting token for {username} - forcing fresh session")
 
-    # ALWAYS recreate session, don't check if it exists
-    spotify_re_init_session(account_pool[parsing_index])
-    token = account_pool[parsing_index]['login']['session']
+    # Track last session creation time
+    last_session_time = account_pool[parsing_index].get('last_session_time', 0)
+    current_time = time.time()
+    time_since_reset = current_time - last_session_time
+
+    # Cooldown period: only recreate if >5 minutes old or if session missing
+    COOLDOWN_SECONDS = 300  # 5 minutes
+
+    try:
+        token = account_pool[parsing_index]['login']['session']
+
+        # Check if session needs recreation
+        if time_since_reset > COOLDOWN_SECONDS:
+            logger.info(f"Session for {username} is {time_since_reset:.0f}s old, recreating...")
+            spotify_re_init_session(account_pool[parsing_index])
+            account_pool[parsing_index]['last_session_time'] = current_time
+            token = account_pool[parsing_index]['login']['session']
+        else:
+            logger.debug(f"Using existing session for {username} ({time_since_reset:.0f}s old)")
+
+    except (OSError, AttributeError, KeyError) as e:
+        # Session missing or invalid - recreate immediately
+        logger.info(f'Session invalid for {username} ({e}), recreating...')
+        spotify_re_init_session(account_pool[parsing_index])
+        account_pool[parsing_index]['last_session_time'] = current_time
+        token = account_pool[parsing_index]['login']['session']
 
     return token
 
