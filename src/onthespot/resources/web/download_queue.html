@@ -203,7 +203,7 @@
         .col-album { width: 15%; min-width: 100px; }
         .col-by { width: 12%; min-width: 80px; }
         .col-service { width: 10%; min-width: 90px; }
-        .col-status { width: 12%; min-width: 100px; }
+        .col-status { width: 12%; min-width: 110px; max-width: 130px; }
         .col-progress { width: 15%; min-width: 120px; }
         .col-action { width: 8%; min-width: 60px; text-align: right; }
 
@@ -216,6 +216,10 @@
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.3px;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .status-downloading {
@@ -955,6 +959,7 @@
             const statusCell = document.createElement('td');
             statusCell.className = 'col-status';
             statusCell.dataset.cell = 'status';
+            statusCell.style.overflow = 'hidden';
             statusCell.innerHTML = createStatusBadge(item.item_status);
             row.appendChild(statusCell);
 
