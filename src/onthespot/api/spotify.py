@@ -743,15 +743,19 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
     headers = {}
     try:
         headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
-    except (RuntimeError, OSError) as e:
+    except (RuntimeError, OSError, ConnectionError, Exception) as e:
         if _retry:
             logger.error(f"Failed to get token after retry: {e}")
             return []
         logger.warning(f"Token retrieval failed, attempting session reconnect: {e}")
-        parsing_index = config.get('active_account_number')
-        spotify_re_init_session(account_pool[parsing_index])
-        new_token = account_pool[parsing_index]['login']['session']
-        return spotify_get_item_by_id(new_token, item_id, item_type, _retry=True)
+        try:
+            parsing_index = config.get('active_account_number')
+            spotify_re_init_session(account_pool[parsing_index])
+            new_token = account_pool[parsing_index]['login']['session']
+            return spotify_get_item_by_id(new_token, item_id, item_type, _retry=True)
+        except Exception as retry_error:
+            logger.error(f"Failed to reconnect session: {retry_error}")
+            return []
 
     # Map internal types to API endpoints
     endpoint_type = item_type
@@ -762,9 +766,13 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
 
     try:
         # Fetch item data from Spotify API
-        response = requests.get(f"{BASE_URL}/{endpoint_type}s/{item_id}", headers=headers)
+        response = requests.get(
+            f"{BASE_URL}/{endpoint_type}s/{item_id}",
+            headers=headers,
+            timeout=10
+        )
         if response.status_code != 200:
-            logger.error(f"Failed to fetch {item_type} {item_id}: {response.status_code}")
+            logger.error(f"Failed to fetch {item_type} {item_id}: {response.status_code} - {response.text}")
             return []
 
         item = response.json()
@@ -775,7 +783,7 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
             item_by = f"{config.get('metadata_separator').join([artist['name'] for artist in item['artists']])}"
             item_thumbnail_url = item['album']['images'][-1]["url"] if len(item['album']['images']) > 0 else ""
         elif item_type == "album":
-            rel_year = re.search(r'(\d{4})', item['release_date']).group(1)
+            rel_year = re.search(r'(\d{4})', item['release_date']).group(1) if item.get('release_date') else '????'
             item_name = f"[Y:{rel_year}] [T:{item['total_tracks']}] {item['name']}"
             item_by = f"{config.get('metadata_separator').join([artist['name'] for artist in item['artists']])}"
             item_thumbnail_url = item['images'][-1]["url"] if len(item['images']) > 0 else ""
@@ -817,8 +825,14 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
             'item_thumbnail_url': item_thumbnail_url
         }]
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error fetching item {item_type}/{item_id}: {e}")
+        return []
+    except (KeyError, ValueError, AttributeError) as e:
+        logger.error(f"Data parsing error for item {item_type}/{item_id}: {e}")
+        return []
     except Exception as e:
-        logger.error(f"Error fetching item {item_type}/{item_id}: {e}")
+        logger.error(f"Unexpected error fetching item {item_type}/{item_id}: {e}")
         return []
 
 
