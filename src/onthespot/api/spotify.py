@@ -297,12 +297,19 @@ def spotify_re_init_session(account):
 
 
 def spotify_get_token(parsing_index):
-    try:
-        token = account_pool[parsing_index]['login']['session']
-    except (OSError, AttributeError):
-        logger.info(f'Failed to retreive token for {account_pool[parsing_index]["username"]}, attempting to reinit session.')
-        spotify_re_init_session(account_pool[parsing_index])
-        token = account_pool[parsing_index]['login']['session']
+    """
+    NUCLEAR OPTION: Always recreate session before returning token.
+
+    This ensures EVERY token retrieval gets a completely fresh session,
+    eliminating any possibility of using stale sessions.
+    """
+    username = account_pool[parsing_index].get('username', 'unknown')
+    logger.debug(f"Getting token for {username} - forcing fresh session")
+
+    # ALWAYS recreate session, don't check if it exists
+    spotify_re_init_session(account_pool[parsing_index])
+    token = account_pool[parsing_index]['login']['session']
+
     return token
 
 

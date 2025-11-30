@@ -443,20 +443,9 @@ class DownloadWorker(QObject):
                         default_format = ".ogg"
                         temp_file_path += default_format
 
-                        # NUCLEAR OPTION: Force session recreation on EVERY download
-                        # Librespot sessions are unreliable - recreate from scratch every time
-                        # This is aggressive but ensures we NEVER use a stale session
-                        current_account_idx = self._find_account_index('spotify', token)
-                        if current_account_idx is not None:
-                            logger.info(f"FORCING session recreation for account {current_account_idx} before download")
-                            from .api.spotify import spotify_re_init_session
-                            try:
-                                spotify_re_init_session(account_pool[current_account_idx])
-                                token = account_pool[current_account_idx]['login']['session']
-                                logger.info(f"✓ Using fresh session for download")
-                            except Exception as e:
-                                logger.error(f"Failed to recreate session: {e}")
-                                raise
+                        # Session recreation is now handled automatically in spotify_get_token()
+                        # The token we received is already from a fresh session
+                        logger.debug(f"Using session token for Spotify download")
 
                         quality = AudioQuality.HIGH
                         bitrate = "160k"
