@@ -222,23 +222,47 @@ def spotify_login_user(account):
 
 
 def spotify_re_init_session(account):
+    """
+    Completely reinitialize a Spotify session by closing the old one and creating a new one.
+
+    Librespot sessions go stale after ~1 hour of idleness when Spotify disconnects inactive clients.
+    This function creates a fresh session with a new TCP connection to Spotify's access points.
+    """
     session_json_path = os.path.join(cache_dir(), "sessions", f"ots_login_{account['uuid']}.json")
+
+    # Close old session first to release resources
+    old_session = account.get('login', {}).get('session')
+    if old_session:
+        try:
+            old_session.close()
+            logger.debug(f"Closed old session for account {account['uuid']}")
+        except Exception as e:
+            logger.warning(f"Error closing old session (non-critical): {e}")
+
     try:
+        # Create brand new session with fresh connection
         config = Session.Configuration.Builder().set_stored_credential_file(session_json_path).build()
-        logger.debug("Session config created")
+        logger.debug(f"Session config created for account {account['uuid']}")
+
         session = Session.Builder(conf=config).stored_file(session_json_path).create()
-        logger.debug("Session re init done")
+        logger.info(f"Session reinitialized successfully for account {account['uuid']}")
+
+        # Update account with new session
         account['login']['session_path'] = session_json_path
         account['login']['session'] = session
         account['status'] = 'active'
-        account['account_type'] = session.get_user_attribute("type")
-        bitrate = "160k"
+
+        # Update account type and bitrate
         account_type = session.get_user_attribute("type")
-        if account_type == "premium":
-            bitrate = "320k"
-        account['bitrate'] = bitrate
-    except:
-        logger.error('Failed to re init session !')
+        account['account_type'] = account_type
+        account['bitrate'] = "320k" if account_type == "premium" else "160k"
+
+        logger.debug(f"Account {account['uuid']} session ready (type: {account_type}, bitrate: {account['bitrate']})")
+
+    except Exception as e:
+        logger.error(f'Failed to reinitialize session for account {account["uuid"]}: {e}')
+        account['status'] = 'error'
+        raise  # Re-raise so caller knows it failed
 
 
 def spotify_get_token(parsing_index):

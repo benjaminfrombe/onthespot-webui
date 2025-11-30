@@ -127,6 +127,36 @@ class DownloadWorker(QObject):
                 indices.append(idx)
         return indices
 
+    def _validate_spotify_session(self, token, account_idx):
+        """
+        Validate that a Spotify session is still healthy before using it.
+
+        Sessions can go stale after being idle for ~1 hour as Spotify disconnects
+        inactive clients. Using a stale session results in incomplete downloads
+        that create corrupted .ogg files, causing FFmpeg exit 183 errors.
+
+        This proactively checks session health and reinitializes if needed.
+        """
+        from .api.spotify import spotify_re_init_session
+
+        try:
+            # Quick health check - this will fail if session is stale
+            user_type = token.get_user_attribute("type")
+            logger.debug(f"Session validation passed for account {account_idx} (user type: {user_type})")
+            return token
+        except Exception as e:
+            logger.warning(f"Session validation failed for account {account_idx}: {e}")
+            logger.info(f"Reinitializing stale session for account {account_idx}...")
+            try:
+                spotify_re_init_session(account_pool[account_idx])
+                new_token = account_pool[account_idx]['login']['session']
+                logger.info(f"Session successfully reinitialized for account {account_idx}")
+                return new_token
+            except Exception as reinit_err:
+                logger.error(f"Session reinitialization failed for account {account_idx}: {reinit_err}")
+                raise RuntimeError(f"Cannot use account {account_idx}: session is stale and reinitialization failed")
+
+
     def _try_get_spotify_stream(self, item, item_id, item_type, token, quality, tried_accounts=None):
         """
         Try to get a Spotify stream, with fallback to other accounts if one fails.
@@ -412,6 +442,14 @@ class DownloadWorker(QObject):
 
                         default_format = ".ogg"
                         temp_file_path += default_format
+
+                        # CRITICAL: Validate session health before download
+                        # Librespot sessions go stale after ~1 hour of idleness
+                        # Using stale sessions causes incomplete downloads → corrupted .ogg → FFmpeg exit 183
+                        current_account_idx = self._find_account_index('spotify', token)
+                        if current_account_idx is not None:
+                            token = self._validate_spotify_session(token, current_account_idx)
+                            logger.debug(f"Using validated session from account {current_account_idx} for download")
 
                         quality = AudioQuality.HIGH
                         bitrate = "160k"
