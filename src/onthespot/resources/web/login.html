@@ -7,42 +7,8 @@
         <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
         <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
         <style>
-            /* Override default login styles for consistent alignment */
-            #loginButton {
-                float: none !important;
-            }
-
-            .plex-button {
-                display: block;
-                width: 100%;
-                padding: 12px;
-                margin: 0;
-                background: linear-gradient(135deg, #e5a00d, #f1c40f);
-                border: none;
-                border-radius: 6px;
-                color: white;
-                font-size: 16px;
-                font-weight: 600;
-                cursor: pointer;
-                text-align: center;
-                transition: transform 0.2s, box-shadow 0.2s;
-            }
-            .plex-button:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(229, 160, 13, 0.4);
-            }
-            .plex-button:disabled {
-                opacity: 0.6;
-                cursor: not-allowed;
-                transform: none;
-            }
-            .plex-button svg {
-                width: 20px;
-                height: 20px;
-                display: inline-block;
-                vertical-align: middle;
-                margin-right: 8px;
-            }
+            /* Inline overrides removed — global stylesheet will supply consistent
+               login form and Plex button styling. */
             .divider {
                 display: flex;
                 align-items: center;
