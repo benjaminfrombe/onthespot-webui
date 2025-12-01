@@ -192,7 +192,52 @@ def login():
             login_user(user)
             return redirect(url_for('search'))
         flash('Invalid credentials, please try again.')
-    return render_template('login.html')
+    return render_template('login.html', config=config.get_all())
+
+
+@app.route('/api/auth/plex', methods=['POST'])
+def auth_plex():
+    """Authenticate user with Plex account"""
+    if not PLEX_AVAILABLE or not plex_api:
+        return jsonify(success=False, error='Plex API not available'), 500
+
+    try:
+        data = request.json
+        auth_token = data.get('authToken')
+
+        if not auth_token:
+            return jsonify(success=False, error='Auth token required'), 400
+
+        # Validate token with Plex.tv and get user info
+        import requests
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Token': auth_token,
+            'X-Plex-Client-Identifier': 'onthespot-music-downloader'
+        }
+
+        response = requests.get('https://plex.tv/users/account.json', headers=headers)
+        response.raise_for_status()
+        plex_user = response.json()['user']
+
+        # Check if Plex login is enabled in config
+        if not config.get('use_plex_login', False):
+            return jsonify(success=False, error='Plex login is not enabled'), 403
+
+        # Create user session
+        username = plex_user.get('username', plex_user.get('email', 'plex_user'))
+        user = User(username)
+        login_user(user)
+
+        logger.info(f"User logged in via Plex: {username}")
+        return jsonify(success=True, user={'username': username, 'email': plex_user.get('email')})
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to validate Plex token: {str(e)}")
+        return jsonify(success=False, error='Invalid Plex token'), 401
+    except Exception as e:
+        logger.error(f"Error during Plex authentication: {str(e)}")
+        return jsonify(success=False, error=str(e)), 500
 
 
 @app.route('/api/logout')

@@ -6,6 +6,62 @@
         <title>OnTheSpot - Login</title>
         <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
         <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+        <style>
+            .plex-button {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                width: 100%;
+                padding: 12px;
+                margin-top: 20px;
+                background: linear-gradient(135deg, #e5a00d, #f1c40f);
+                border: none;
+                border-radius: 6px;
+                color: white;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            .plex-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(229, 160, 13, 0.4);
+            }
+            .plex-button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                transform: none;
+            }
+            .plex-button svg {
+                width: 20px;
+                height: 20px;
+            }
+            .divider {
+                display: flex;
+                align-items: center;
+                text-align: center;
+                margin: 20px 0;
+                color: #999;
+            }
+            .divider::before,
+            .divider::after {
+                content: '';
+                flex: 1;
+                border-bottom: 1px solid #ddd;
+            }
+            .divider span {
+                padding: 0 10px;
+            }
+            .error-message {
+                color: #e74c3c;
+                padding: 10px;
+                margin-top: 10px;
+                border-radius: 4px;
+                background: rgba(231, 76, 60, 0.1);
+                display: none;
+            }
+        </style>
     </head>
     <body>
         <div id="main">
@@ -14,6 +70,21 @@
                 <img src="icons/onthespot.png" alt="OnTheSpot logo">
             </div>
             <div id="formplace" class="col">
+                <div id="error-message" class="error-message"></div>
+
+                {% if config.use_plex_login %}
+                <!-- Plex Login Button -->
+                <button id="plexLoginBtn" class="plex-button" onclick="startPlexLogin()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                    Sign in with Plex
+                </button>
+
+                <div class="divider"><span>or</span></div>
+                {% endif %}
+
+                <!-- Standard Login Form -->
                 <form id="loginform" method="POST">
                     <div class="row">
                         <label for="username">Username</label><br>
@@ -29,5 +100,190 @@
                 </form>
             </div>
         </div>
+
+        {% if config.use_plex_login %}
+        <script>
+            // Plex OAuth Implementation (inspired by overseerr)
+            class PlexOAuth {
+                constructor() {
+                    this.plexHeaders = null;
+                    this.pin = null;
+                    this.popup = null;
+                    this.authToken = null;
+                }
+
+                initializeHeaders() {
+                    let clientId = localStorage.getItem('plex-client-id');
+                    if (!clientId) {
+                        clientId = this.generateUUID();
+                        localStorage.setItem('plex-client-id', clientId);
+                    }
+
+                    this.plexHeaders = {
+                        'Accept': 'application/json',
+                        'X-Plex-Product': 'OnTheSpot',
+                        'X-Plex-Version': '1.0',
+                        'X-Plex-Client-Identifier': clientId,
+                        'X-Plex-Model': 'Plex OAuth',
+                        'X-Plex-Platform': navigator.platform,
+                        'X-Plex-Platform-Version': navigator.appVersion,
+                        'X-Plex-Device': navigator.platform,
+                        'X-Plex-Device-Name': 'OnTheSpot Web',
+                        'X-Plex-Language': 'en'
+                    };
+                }
+
+                generateUUID() {
+                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                        const r = Math.random() * 16 | 0;
+                        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                        return v.toString(16);
+                    });
+                }
+
+                async getPin() {
+                    const response = await fetch('https://plex.tv/api/v2/pins?strong=true', {
+                        method: 'POST',
+                        headers: this.plexHeaders
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to get PIN from Plex');
+                    }
+
+                    const data = await response.json();
+                    this.pin = { id: data.id, code: data.code };
+                    return this.pin;
+                }
+
+                preparePopup() {
+                    const width = 600;
+                    const height = 700;
+                    const left = (screen.width - width) / 2;
+                    const top = (screen.height - height) / 2;
+
+                    this.popup = window.open(
+                        'about:blank',
+                        'Plex Authentication',
+                        `width=${width},height=${height},top=${top},left=${left}`
+                    );
+                }
+
+                async login() {
+                    this.initializeHeaders();
+                    await this.getPin();
+
+                    const params = new URLSearchParams({
+                        clientID: this.plexHeaders['X-Plex-Client-Identifier'],
+                        code: this.pin.code,
+                        'context[device][product]': this.plexHeaders['X-Plex-Product'],
+                        'context[device][version]': this.plexHeaders['X-Plex-Version'],
+                        'context[device][platform]': this.plexHeaders['X-Plex-Platform'],
+                        'context[device][platformVersion]': this.plexHeaders['X-Plex-Platform-Version'],
+                        'context[device][device]': this.plexHeaders['X-Plex-Device'],
+                        'context[device][deviceName]': this.plexHeaders['X-Plex-Device-Name'],
+                        'context[device][model]': this.plexHeaders['X-Plex-Model'],
+                        'context[device][layout]': 'desktop'
+                    });
+
+                    if (this.popup) {
+                        this.popup.location.href = `https://app.plex.tv/auth/#!?${params.toString()}`;
+                    }
+
+                    return this.pinPoll();
+                }
+
+                async pinPoll() {
+                    return new Promise((resolve, reject) => {
+                        const poll = async () => {
+                            try {
+                                const response = await fetch(`https://plex.tv/api/v2/pins/${this.pin.id}`, {
+                                    headers: this.plexHeaders
+                                });
+
+                                if (!response.ok) {
+                                    throw new Error('Failed to check PIN status');
+                                }
+
+                                const data = await response.json();
+
+                                if (data.authToken) {
+                                    this.authToken = data.authToken;
+                                    this.closePopup();
+                                    resolve(this.authToken);
+                                } else if (this.popup && !this.popup.closed) {
+                                    setTimeout(poll, 1000);
+                                } else if (this.popup && this.popup.closed) {
+                                    reject(new Error('Popup closed without completing login'));
+                                }
+                            } catch (error) {
+                                this.closePopup();
+                                reject(error);
+                            }
+                        };
+
+                        poll();
+                    });
+                }
+
+                closePopup() {
+                    if (this.popup) {
+                        this.popup.close();
+                        this.popup = null;
+                    }
+                }
+            }
+
+            const plexOAuth = new PlexOAuth();
+            let isAuthenticating = false;
+
+            async function startPlexLogin() {
+                if (isAuthenticating) return;
+
+                isAuthenticating = true;
+                const btn = document.getElementById('plexLoginBtn');
+                const errorDiv = document.getElementById('error-message');
+
+                btn.disabled = true;
+                btn.innerHTML = '<span>Connecting to Plex...</span>';
+                errorDiv.style.display = 'none';
+
+                try {
+                    plexOAuth.preparePopup();
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay for popup
+
+                    btn.innerHTML = '<span>Waiting for authorization...</span>';
+                    const authToken = await plexOAuth.login();
+
+                    // Send token to backend
+                    btn.innerHTML = '<span>Signing in...</span>';
+                    const response = await fetch('/api/auth/plex', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ authToken })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        btn.innerHTML = '<span>✓ Success! Redirecting...</span>';
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 500);
+                    } else {
+                        throw new Error(result.error || 'Authentication failed');
+                    }
+                } catch (error) {
+                    console.error('Plex login error:', error);
+                    errorDiv.textContent = error.message || 'Failed to sign in with Plex. Please try again.';
+                    errorDiv.style.display = 'block';
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>Sign in with Plex';
+                } finally {
+                    isAuthenticating = false;
+                }
+            }
+        </script>
+        {% endif %}
     </body>
 </html>

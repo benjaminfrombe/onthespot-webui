@@ -559,6 +559,13 @@
                     </label>
                 </div>
                 <div class="setting-row">
+                    <label for="use_plex_login">Enable Plex Login</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="use_plex_login" {% if config.use_plex_login %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
                     <label for="webui_username">Username</label>
                     <input type="text" id="webui_username" value="{{ config.webui_username }}" placeholder="Enter username">
                 </div>
@@ -1281,6 +1288,7 @@
             return {
                 active_account_number: activeAccountNumber ? activeAccountNumber.value : '',
                 use_webui_login: document.getElementById('use_webui_login').checked,
+                use_plex_login: document.getElementById('use_plex_login').checked,
                 webui_username: document.getElementById('webui_username').value,
                 webui_password: document.getElementById('webui_password').value,
                 plex_server_url: document.getElementById('plex_server_url').value,
