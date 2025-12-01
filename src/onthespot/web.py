@@ -192,7 +192,12 @@ def login():
             login_user(user)
             return redirect(url_for('search'))
         flash('Invalid credentials, please try again.')
-    return render_template('login.html', config=config.get_all())
+
+    # Load config for template
+    config_path = os.path.join(config_dir(), 'otsconfig.json')
+    with open(config_path, 'r') as config_file:
+        config_data = json.load(config_file)
+    return render_template('login.html', config=config_data)
 
 
 @app.route('/api/auth/plex', methods=['POST'])
