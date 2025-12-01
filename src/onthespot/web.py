@@ -259,55 +259,91 @@ def auth_plex():
         is_admin = False
         if config.get('require_plex_server_access', True):
             try:
-                # Get the owner's Plex token from settings (configured in settings)
+                server_url = config.get('plex_server_url', 'http://127.0.0.1:32400')
                 owner_plex_token = config.get('plex_auth_token')
 
-                if not owner_plex_token:
-                    logger.warning("Plex server access check enabled but no owner token configured")
+                if not owner_plex_token or not server_url:
+                    logger.warning("Plex server access check enabled but server not configured")
                     return jsonify(success=False, error='Plex server not configured. Contact administrator.'), 403
 
-                # Check if this user is the owner (has the same token)
-                if auth_token == owner_plex_token:
-                    is_admin = True
-                    logger.info(f"Plex user {username} is the server owner")
-                else:
-                    # Check if user has access to the server
-                    owner_headers = {
+                # Method 1: Check if user can access the server directly with their token
+                has_access = False
+                try:
+                    test_headers = {
                         'Accept': 'application/json',
-                        'X-Plex-Token': owner_plex_token,
-                        'X-Plex-Client-Identifier': 'onthespot-music-downloader'
+                        'X-Plex-Token': auth_token
                     }
+                    test_response = requests.get(f"{server_url}/identity",
+                                                headers=test_headers,
+                                                timeout=5)
 
-                    # Get list of users with access to the server
-                    users_response = requests.get('https://plex.tv/api/users',
-                                                 headers=owner_headers,
-                                                 timeout=10)
+                    if test_response.status_code == 200:
+                        has_access = True
+                        logger.info(f"Plex user {username} can access server directly with their token")
 
-                    if users_response.status_code == 200:
-                        # Parse XML response
-                        import xml.etree.ElementTree as ET
-                        root = ET.fromstring(users_response.text)
-
-                        # Check if user is in the shared users list
-                        has_access = False
-                        for user_elem in root.findall('.//User'):
-                            user_id = user_elem.get('id')
-                            if user_id and int(user_id) == plex_id:
-                                has_access = True
-                                logger.info(f"Plex user {username} has access to the server")
-                                break
-
-                        if not has_access:
-                            logger.warning(f"Plex user {username} (ID: {plex_id}) does not have access to the server")
-                            return jsonify(success=False, error='You do not have access to this Plex server'), 403
+                        # Check if they're the owner by comparing tokens
+                        if auth_token == owner_plex_token:
+                            is_admin = True
+                            logger.info(f"Plex user {username} is the server owner (token match)")
                     else:
-                        logger.warning(f"Failed to verify Plex server access: HTTP {users_response.status_code}")
-                        # Allow login if we can't verify (fail open)
+                        logger.debug(f"Direct server access test failed: HTTP {test_response.status_code}")
+                except Exception as e:
+                    logger.debug(f"Direct server access test failed: {str(e)}")
+
+                # Method 2: If direct access failed, check shared users list (for server owners checking who has access)
+                if not has_access:
+                    try:
+                        owner_headers = {
+                            'Accept': 'application/json',
+                            'X-Plex-Token': owner_plex_token,
+                            'X-Plex-Client-Identifier': 'onthespot-music-downloader'
+                        }
+
+                        # First verify if owner_plex_token is valid by getting account info
+                        owner_response = requests.get('https://plex.tv/users/account.json',
+                                                     headers=owner_headers,
+                                                     timeout=5)
+
+                        if owner_response.status_code == 200:
+                            owner_user = owner_response.json()['user']
+                            owner_id = owner_user.get('id')
+
+                            # Check if authenticating user IS the owner
+                            if plex_id == owner_id:
+                                has_access = True
+                                is_admin = True
+                                logger.info(f"Plex user {username} is the server owner (ID match)")
+                            else:
+                                # Get list of shared users
+                                users_response = requests.get('https://plex.tv/api/users',
+                                                            headers=owner_headers,
+                                                            timeout=10)
+
+                                if users_response.status_code == 200:
+                                    import xml.etree.ElementTree as ET
+                                    root = ET.fromstring(users_response.text)
+
+                                    for user_elem in root.findall('.//User'):
+                                        user_id = user_elem.get('id')
+                                        if user_id and int(user_id) == plex_id:
+                                            has_access = True
+                                            logger.info(f"Plex user {username} found in shared users list")
+                                            break
+                        else:
+                            logger.warning(f"Could not verify owner token: HTTP {owner_response.status_code}")
+
+                    except Exception as e:
+                        logger.warning(f"Shared users check failed: {str(e)}")
+
+                if not has_access:
+                    logger.warning(f"Plex user {username} (ID: {plex_id}) does not have access to the server")
+                    logger.info(f"Server URL checked: {server_url}")
+                    return jsonify(success=False, error='You do not have access to this Plex server'), 403
 
             except Exception as e:
                 logger.error(f"Error checking Plex server access: {str(e)}")
-                # Allow login if verification fails (fail open)
-                logger.warning("Allowing Plex login despite verification error")
+                logger.exception("Full traceback:")
+                return jsonify(success=False, error=f'Server access verification failed: {str(e)}'), 500
 
         # Create user session
         user = User(username, is_admin=is_admin, is_plex_user=True)
