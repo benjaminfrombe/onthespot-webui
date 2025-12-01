@@ -15,9 +15,23 @@ class PlexAPI:
     CLIENT_IDENTIFIER = "onthespot-music-downloader"
 
     def __init__(self):
-        self.auth_token = config.get('plex_auth_token', None)
-        self.server_url = config.get('plex_server_url', 'http://127.0.0.1:32400')
-        self.library_section_id = config.get('plex_library_section_id', None)
+        # Don't cache config values - read them dynamically
+        pass
+
+    @property
+    def auth_token(self):
+        """Get auth token from config (always fresh)"""
+        return config.get('plex_auth_token', None)
+
+    @property
+    def server_url(self):
+        """Get server URL from config (always fresh)"""
+        return config.get('plex_server_url', 'http://127.0.0.1:32400')
+
+    @property
+    def library_section_id(self):
+        """Get library section ID from config (always fresh)"""
+        return config.get('plex_library_section_id', None)
 
     def request_pin(self):
         """Request a PIN for authentication"""
@@ -61,11 +75,11 @@ class PlexAPI:
             data = response.json()
 
             if data.get('authToken'):
-                self.auth_token = data['authToken']
-                config.set('plex_auth_token', self.auth_token)
+                auth_token = data['authToken']
+                config.set('plex_auth_token', auth_token)
                 config.save()
                 logger.info("Plex authentication successful")
-                return self.auth_token
+                return auth_token
             return None
         except Exception as e:
             logger.error(f"Failed to check PIN: {str(e)}")
@@ -107,7 +121,6 @@ class PlexAPI:
 
     def set_library(self, library_id):
         """Set the selected music library"""
-        self.library_section_id = library_id
         config.set('plex_library_section_id', library_id)
         config.save()
         logger.info(f"Set Plex library section ID to: {library_id}")
@@ -275,8 +288,6 @@ class PlexAPI:
 
     def disconnect(self):
         """Clear Plex authentication"""
-        self.auth_token = None
-        self.library_section_id = None
         config.set('plex_auth_token', None)
         config.set('plex_library_section_id', None)
         config.set('plex_server_url', 'http://127.0.0.1:32400')
