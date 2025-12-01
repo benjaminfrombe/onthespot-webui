@@ -199,10 +199,82 @@ tr:hover {
 }
 
 /* ============= FORMS & INPUTS ============= */
+/* Keep the global form rules generic. Specific login layout is scoped
+   to #loginform to avoid affecting other pages. */
 form {
     display: flex;
     gap: 10px;
     align-items: center;
+}
+
+/* Login form: align rows to the bottom so the submit button lines up with inputs */
+#loginform {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end; /* ensures button sits aligned with the input fields */
+    flex-wrap: wrap; /* allow wrapping on smaller screens */
+}
+
+#loginform .row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 220px; /* give stability to input width */
+    flex: 1 1 220px;
+}
+
+#loginform label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* Make submit inputs look like buttons and match visual spacing */
+#loginform input[type="submit"],
+#loginform input[type="button"] {
+    padding: 12px 18px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, var(--accent) 0%, #43a047 100%);
+    color: white;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all var(--transition-normal);
+    box-shadow: var(--shadow-sm);
+    align-self: flex-start; /* ensures the button aligns with inputs when widths match */
+}
+
+#loginform input[type="submit"]:hover,
+#loginform input[type="button"]:hover {
+    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent) 100%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+#loginform input[type="submit"]:active,
+#loginform input[type="button"]:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Responsive: stack vertically on smaller screens to avoid cramped layout */
+@media screen and (max-width: 560px) {
+    #loginform {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #loginform .row {
+        min-width: auto;
+        flex: 1 1 auto;
+    }
+
+    #loginform input[type="submit"],
+    #loginform input[type="button"] {
+        width: 100%;
+        align-self: stretch;
+    }
 }
 
 input, select {
@@ -560,9 +632,7 @@ button.button-clicked {
     text-align: left;
 }
 
-#loginButton {
-    float: right;
-}
+/* #loginButton float removed — layout is handled by #loginform rules above */
 
 #logo img {
     height: 11em;
