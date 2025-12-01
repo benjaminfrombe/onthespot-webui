@@ -454,6 +454,7 @@
             <li><a href="/download_queue">Downloads</a></li>
             <li><a class="active" href="/settings">Settings</a></li>
             <li><a href="/about">About</a></li>
+            <li style="float: right;"><a href="/api/logout" style="color: #e74c3c;">Logout</a></li>
         </ul>
     </div>
 
@@ -591,17 +592,23 @@
                 <div class="section-toggle">▼</div>
             </div>
             <div class="section-content">
+                <div style="padding: 10px; margin-bottom: 15px; background: rgba(52, 152, 219, 0.1); border-left: 4px solid #3498db; border-radius: 4px;">
+                    <strong>Note:</strong> These settings are used for both playlist management <strong>and user authentication</strong>. When "Require Plex Server Access" is enabled, users signing in with Plex must have access to this server.
+                </div>
                 <div class="setting-row">
                     <label for="plex_server_url">Plex Server URL</label>
                     <input type="text" id="plex_server_url" value="{{ config.plex_server_url or 'http://127.0.0.1:32400' }}" placeholder="http://127.0.0.1:32400">
+                    <small style="display: block; color: #666; margin-top: 5px;">URL of your Plex Media Server</small>
                 </div>
                 <div class="setting-row">
-                    <label for="plex_auth_token">X-Plex-Token</label>
+                    <label for="plex_auth_token">X-Plex-Token (Server Owner)</label>
                     <input type="text" id="plex_auth_token" value="{{ config.plex_auth_token or '' }}" placeholder="Enter your X-Plex-Token">
+                    <small style="display: block; color: #666; margin-top: 5px;">Server owner's token - used to verify user access and manage playlists</small>
                 </div>
                 <div class="setting-row">
                     <label for="plex_library_section_id">Library Section ID</label>
                     <input type="text" id="plex_library_section_id" value="{{ config.plex_library_section_id or '' }}" placeholder="Enter library section ID">
+                    <small style="display: block; color: #666; margin-top: 5px;">Music library section ID for playlist imports</small>
                 </div>
                 <div class="setting-row">
                     <label></label>
