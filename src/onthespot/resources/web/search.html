@@ -254,6 +254,7 @@
                 align-items: center;
                 column-gap: 8px; /* tighten spacing so badge sits closer */
                 padding: 8px 8px;
+                border-bottom: 1px solid rgba(255,255,255,0.06);
             }
 
             /* Hide the table header on mobile to avoid the heavy dark band */
@@ -272,9 +273,17 @@
                 box-sizing: border-box;
             }
 
-            /* Reset cell padding to work with the grid */
+            /* Reset cell padding to work with the grid and avoid per-cell borders
+               creating disjointed separators. We'll draw a single border on each
+               row so it spans the full width. */
             th, td {
                 padding: 0;
+                border-bottom: none; /* prevent fragmented cell bottoms */
+            }
+
+            /* Remove trailing row separator */
+            table tbody tr:last-child {
+                border-bottom: none;
             }
 
             .item-thumbnail {
