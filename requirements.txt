@@ -7,7 +7,7 @@ mutagen>=1.47.0
 pillow>=10.4.0
 pyqt6>=6.8.0
 pyqt6_sip>=13.9.1
-pywidevine==1.6.0
+pywidevine==1.9.0; python_version < "3.12"
 protobuf==3.20.1
 requests>=2.32.3
 urllib3>=2.2.3
