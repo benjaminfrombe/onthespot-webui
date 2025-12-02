@@ -6,8 +6,13 @@ import requests
 import re
 from uuid import uuid4
 import xml.etree.ElementTree as ET
-from pywidevine import PSSH, Cdm, Device
-from pywidevine.license_protocol_pb2 import WidevinePsshData
+try:
+    from pywidevine import PSSH, Cdm, Device  # type: ignore
+    from pywidevine.license_protocol_pb2 import WidevinePsshData  # type: ignore
+    HAS_PYWIDEVINE = True
+except ImportError:
+    PSSH = Cdm = Device = WidevinePsshData = None  # type: ignore
+    HAS_PYWIDEVINE = False
 from ..constants import WVN_KEY
 from ..otsconfig import config
 from ..runtimedata import account_pool, get_logger
@@ -16,6 +21,14 @@ from ..utils import conv_list_format, make_call
 logger = get_logger("api.apple_music")
 BASE_URL = 'https://amp-api.music.apple.com/v1'
 WVN_LICENSE_URL = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense"
+
+
+def _ensure_pywidevine():
+    if not HAS_PYWIDEVINE:
+        raise ImportError(
+            "pywidevine is not installed. Widevine-protected Apple Music playback requires pywidevine; "
+            "install it in an environment that supports it or disable Widevine-dependent features."
+        )
 
 
 def apple_music_add_account(media_user_token):
@@ -330,6 +343,7 @@ def apple_music_get_webplayback_info(session, item_id):
 
 
 def apple_music_get_decryption_key(session, stream_url, item_id):
+    _ensure_pywidevine()
     # Extract the PSSH (Protection System Specific Header) from the m3u8 object
     m3u8_obj = m3u8.load(stream_url)
     pssh = m3u8_obj.keys[0].uri if m3u8_obj.keys else None

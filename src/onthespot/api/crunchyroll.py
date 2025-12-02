@@ -6,9 +6,14 @@ import re
 import requests
 import time
 from uuid import uuid4
-from pywidevine.cdm import Cdm
-from pywidevine.pssh import PSSH
-from pywidevine.device import Device
+try:
+    from pywidevine.cdm import Cdm  # type: ignore
+    from pywidevine.pssh import PSSH  # type: ignore
+    from pywidevine.device import Device  # type: ignore
+    HAS_PYWIDEVINE = True
+except ImportError:
+    Cdm = PSSH = Device = None  # type: ignore
+    HAS_PYWIDEVINE = False
 from yt_dlp import YoutubeDL
 from ..constants import WVN_KEY
 from ..otsconfig import config
@@ -19,6 +24,14 @@ logger = get_logger("api.crunchyroll")
 PUBLIC_TOKEN = "dC1rZGdwMmg4YzNqdWI4Zm4wZnE6eWZMRGZNZnJZdktYaDRKWFMxTEVJMmNDcXUxdjVXYW4="
 APP_VERSION = "3.60.0"
 BASE_URL = "https://beta-api.crunchyroll.com"
+
+
+def _ensure_pywidevine():
+    if not HAS_PYWIDEVINE:
+        raise ImportError(
+            "pywidevine is not installed. Widevine-protected Crunchyroll playback requires pywidevine; "
+            "install it in an environment that supports it or disable Widevine-dependent features."
+        )
 
 
 def crunchyroll_login_user(account):
@@ -317,6 +330,7 @@ def crunchyroll_get_mpd_info(token, episode_id):
 
 
 def crunchyroll_get_decryption_key(token, item_id, mpd_url, stream_token):
+    _ensure_pywidevine()
     headers = {}
     headers['Authorization'] = f'Bearer {token}'
     headers['Connection'] = 'Keep-Alive'
