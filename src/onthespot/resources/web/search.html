@@ -207,7 +207,6 @@
         }
 
         .type-column {
-            width: 1%;
             white-space: nowrap;
         }
 
@@ -487,6 +486,20 @@
             th, td {
                 padding: 10px 8px;
                 font-size: 12px;
+            }
+
+            .table-wrapper table {
+                table-layout: fixed;
+            }
+
+            th:first-child,
+            td:first-child {
+                width: 56px;
+            }
+
+            th.type-column,
+            td.type-column {
+                width: 88px;
             }
 
             .hide-on-mobile {
