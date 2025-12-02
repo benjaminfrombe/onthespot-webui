@@ -228,6 +228,24 @@
             white-space: nowrap;
         }
 
+        /* Type column alignment */
+        th.type-column,
+        td.type-column {
+            text-align: right;
+        }
+
+        @media screen and (max-width: 600px) {
+            th.type-column,
+            td.type-column {
+                text-align: right;
+            }
+
+            td.type-column .type-badge {
+                margin-left: auto;
+                display: inline-block;
+            }
+        }
+
         /* Type badges */
         .type-badge {
             display: inline-block;
@@ -637,7 +655,7 @@
                             {% endif %}
                             <th>Name</th>
                             <th class="hide-on-mobile">By</th>
-                            <th>Type</th>
+                            <th class="type-column">Type</th>
                             <th class="hide-on-mobile">Service</th>
                             <th class="action-header">Action</th>
                         </tr>
@@ -1013,6 +1031,7 @@
                 
                 // Type
                 const typeCell = document.createElement('td');
+                typeCell.className = 'type-column';
                 typeCell.innerHTML = createTypeBadge(item.item_type, item.item_url);
                 row.appendChild(typeCell);
                 
