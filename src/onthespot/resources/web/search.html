@@ -291,6 +291,23 @@
             flex-wrap: nowrap;
         }
 
+        /* Hide action button cell on small screens */
+        @media screen and (max-width: 600px) {
+            .action-cell {
+                display: none !important;
+            }
+            .type-badge {
+                cursor: pointer;
+                box-shadow: 0 2px 8px rgba(59,130,246,0.08);
+                border: 1px solid rgba(59,130,246,0.12);
+                transition: background 0.18s, box-shadow 0.18s;
+            }
+            .type-badge:hover {
+                background: rgba(59,130,246,0.12);
+                box-shadow: 0 4px 16px rgba(59,130,246,0.16);
+            }
+        }
+
         .action-cell .download-action-button {
             padding: 6px;
             min-width: 32px;
@@ -844,7 +861,7 @@
         }
 
         // ============= TYPE BADGE =============
-        function createTypeBadge(type) {
+        function createTypeBadge(type, url) {
             const typeClasses = {
                 'track': 'type-track',
                 'album': 'type-album',
@@ -855,6 +872,10 @@
                 'audiobook': 'type-audiobook'
             };
             const className = typeClasses[type?.toLowerCase()] || '';
+            // On mobile, make badge clickable for download
+            if (window.innerWidth <= 600) {
+                return `<span class="type-badge ${className}" onclick="handleDownload('${url}')">${capitalizeFirstLetter(type)}</span>`;
+            }
             return `<span class="type-badge ${className}">${capitalizeFirstLetter(type)}</span>`;
         }
 
@@ -990,7 +1011,7 @@
                 
                 // Type
                 const typeCell = document.createElement('td');
-                typeCell.innerHTML = createTypeBadge(item.item_type);
+                typeCell.innerHTML = createTypeBadge(item.item_type, item.item_url);
                 row.appendChild(typeCell);
                 
                 // Service (icon and text inline)
