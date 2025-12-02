@@ -388,10 +388,13 @@
         }
 
         /* Action button cell */
+        /* keep buttons tightly grouped, right-aligned and vertically centered */
         .action-cell {
             display: flex;
-            gap: 4px;
+            gap: 8px;
             flex-wrap: nowrap;
+            align-items: center;    /* center vertically */
+            justify-content: flex-end; /* push to the right side of the cell */
         }
 
         /* Hide action button cell on small screens */
@@ -417,6 +420,9 @@
             padding: 6px;
             min-width: 32px;
             min-height: 32px;
+            display: inline-flex; /* ensure icon centers inside */
+            align-items: center;
+            justify-content: center;
         }
 
         /* Empty state */
