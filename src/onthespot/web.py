@@ -13,16 +13,16 @@ import traceback
 from flask import Flask, jsonify, render_template, redirect, request, send_file, url_for, flash, Response, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from .accounts import FillAccountPool, get_account_token
-from .api.apple_music import apple_music_get_track_metadata, apple_music_add_account
-from .api.bandcamp import bandcamp_get_track_metadata
-from .api.deezer import deezer_get_track_metadata, deezer_add_account
-from .api.qobuz import qobuz_get_track_metadata, qobuz_add_account
-from .api.soundcloud import soundcloud_get_track_metadata, soundcloud_add_account
-from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata
-from .api.tidal import tidal_get_track_metadata
-from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account
-from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account
-from .api.generic import generic_add_account
+from .api.apple_music import apple_music_get_track_metadata, apple_music_add_account, apple_music_login_user
+from .api.bandcamp import bandcamp_get_track_metadata, bandcamp_login_user
+from .api.deezer import deezer_get_track_metadata, deezer_add_account, deezer_login_user
+from .api.qobuz import qobuz_get_track_metadata, qobuz_add_account, qobuz_login_user
+from .api.soundcloud import soundcloud_get_track_metadata, soundcloud_add_account, soundcloud_login_user
+from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user
+from .api.tidal import tidal_get_track_metadata, tidal_login_user
+from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account, youtube_music_login_user
+from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account, crunchyroll_login_user
+from .api.generic import generic_add_account, generic_login_user
 try:
     from .api.plex import plex_api
     PLEX_AVAILABLE = True
@@ -873,6 +873,35 @@ def main():
     start_workers()
 
     fill_account_pool.wait()
+
+    # Check account pool status and retry failed accounts before loading cached queue
+    max_retries = 3
+    retry_count = 0
+    while retry_count < max_retries:
+        failed_accounts = [acc for acc in account_pool if acc.get('active') and acc.get('status') != 'active']
+        if not failed_accounts:
+            break
+        
+        logger.warning(f"Found {len(failed_accounts)} failed accounts, attempting re-initialization (attempt {retry_count + 1}/{max_retries})")
+        for account in failed_accounts:
+            service = account['service']
+            try:
+                logger.info(f"Re-initializing account {account.get('uuid', 'unknown')} ({service})")
+                valid_login = globals()[f"{service}_login_user"](account)
+                if valid_login:
+                    logger.info(f"Successfully re-initialized account {account.get('uuid', 'unknown')}")
+                else:
+                    logger.error(f"Failed to re-initialize account {account.get('uuid', 'unknown')}")
+            except Exception as e:
+                logger.error(f"Exception during account re-initialization: {e}")
+        
+        retry_count += 1
+        if retry_count < max_retries and any(acc.get('status') != 'active' for acc in account_pool if acc.get('active')):
+            time.sleep(2)  # Wait before retry
+    
+    # Log final account status
+    active_accounts = [acc for acc in account_pool if acc.get('status') == 'active']
+    logger.info(f"Account pool ready: {len(active_accounts)} active accounts out of {len(account_pool)} total")
 
     if config.get('mirror_spotify_playback'):
         mirrorplayback = MirrorSpotifyPlayback()
