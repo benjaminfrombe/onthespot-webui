@@ -749,6 +749,7 @@ def set_music_thumbnail(filename, metadata):
                 with open(image_path, 'rb') as image_file:
                     image_data = image_file.read()
                 tags = OggVorbis(filename)
+                logger.info(f"OGG tags before adding cover: {list(tags.keys())}")
                 picture = Picture()
                 picture.data = image_data
                 picture.type = 3
@@ -758,7 +759,9 @@ def set_music_thumbnail(filename, metadata):
                 encoded_data = base64.b64encode(picture_data)
                 vcomment_value = encoded_data.decode("ascii")
                 tags["metadata_block_picture"] = [vcomment_value]
+                logger.info(f"OGG tags after adding cover: {list(tags.keys())}")
                 tags.save()
+                logger.info(f"OGG cover art embedded successfully for: {file_name}")
 
             if os.path.exists(temp_name):
                 os.remove(temp_name)
