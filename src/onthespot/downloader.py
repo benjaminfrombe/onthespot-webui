@@ -1343,6 +1343,13 @@ class DownloadWorker(QObject):
                                 bitrate = config.get("file_bitrate")
                             convert_audio_format(file_path, bitrate, default_format)
 
+                            # Override metadata for playlist tracks
+                            if item.get('parent_category') == 'playlist':
+                                item_metadata['album'] = item.get('playlist_name', item_metadata.get('album'))
+                                item_metadata['album_name'] = item.get('playlist_name', item_metadata.get('album'))
+                                item_metadata['compilation'] = '1'
+                                logger.info(f"Playlist track: setting album to '{item_metadata['album']}' and compilation=1")
+
                             embed_metadata(item, item_metadata)
 
                             # Thumbnail
