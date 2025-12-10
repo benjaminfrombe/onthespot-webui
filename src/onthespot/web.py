@@ -44,11 +44,24 @@ _restart_in_progress = False
 
 def _cache_download_queue_to_disk():
     """Persist the current download queue so the new process can resume it."""
-    cached_path = os.path.join(cache_dir(), 'cached_download_queue.txt')
+    import json
+    cached_path = os.path.join(cache_dir(), 'cached_download_queue.json')
     with download_queue_lock:
+        # Save essential metadata to preserve playlist context
+        items_to_cache = []
+        for item in download_queue.values():
+            items_to_cache.append({
+                'item_url': item.get('item_url'),
+                'item_service': item.get('item_service'),
+                'item_type': item.get('item_type'),
+                'item_id': item.get('item_id'),
+                'parent_category': item.get('parent_category'),
+                'playlist_name': item.get('playlist_name'),
+                'playlist_by': item.get('playlist_by'),
+                'playlist_number': item.get('playlist_number')
+            })
         with open(cached_path, 'w') as file:
-            for item in download_queue.values():
-                file.write(item['item_url'] + '\n')
+            json.dump(items_to_cache, file, indent=2)
     return cached_path
 
 
@@ -907,11 +920,41 @@ def main():
         mirrorplayback = MirrorSpotifyPlayback()
         mirrorplayback.start()
 
-    cached_file_path = os.path.join(cache_dir(), 'cached_download_queue.txt')
-    if os.path.isfile(cached_file_path):
-        logger.info(f'Found cached download queue at {cached_file_path}, appending items to download queue...')
-        get_search_results(cached_file_path)
-        os.remove(cached_file_path)
+    # Try JSON format first (new format with metadata)
+    cached_file_json = os.path.join(cache_dir(), 'cached_download_queue.json')
+    cached_file_txt = os.path.join(cache_dir(), 'cached_download_queue.txt')
+    
+    if os.path.isfile(cached_file_json):
+        import json
+        logger.info(f'Found cached download queue at {cached_file_json}, restoring items with metadata...')
+        try:
+            with open(cached_file_json, 'r') as file:
+                cached_items = json.load(file)
+            
+            # Add items back to parsing queue with preserved metadata
+            from .utils import format_local_id
+            for item_data in cached_items:
+                local_id = format_local_id(item_data.get('item_id'))
+                with parsing_lock:
+                    parsing[item_data.get('item_id')] = {
+                        'item_url': item_data.get('item_url'),
+                        'item_service': item_data.get('item_service'),
+                        'item_type': item_data.get('item_type'),
+                        'item_id': item_data.get('item_id'),
+                        'parent_category': item_data.get('parent_category'),
+                        'playlist_name': item_data.get('playlist_name'),
+                        'playlist_by': item_data.get('playlist_by'),
+                        'playlist_number': item_data.get('playlist_number')
+                    }
+            logger.info(f'Restored {len(cached_items)} items from cached queue')
+            os.remove(cached_file_json)
+        except Exception as e:
+            logger.error(f'Failed to restore cached queue from JSON: {e}')
+    elif os.path.isfile(cached_file_txt):
+        # Fallback to old format (plain URLs)
+        logger.info(f'Found old format cached download queue at {cached_file_txt}, parsing as URLs...')
+        get_search_results(cached_file_txt)
+        os.remove(cached_file_txt)
 
     # Log registered routes for debugging
     logger.info("=== Registered Routes ===")

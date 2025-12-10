@@ -260,13 +260,23 @@ def parsingworker():
 
                 if current_type in ["track", "podcast_episode", "movie", "episode"]:
                     local_id = format_local_id(item_id)
+                    
+                    # Preserve playlist context if it exists (from cached queue)
+                    parent_category = item.get('parent_category', current_type)
+                    playlist_name = item.get('playlist_name')
+                    playlist_by = item.get('playlist_by')
+                    playlist_number = item.get('playlist_number')
+                    
                     with pending_lock:
                         pending[local_id] = {
                             'local_id': local_id,
                             'item_service': current_service,
                             'item_type': current_type,
                             'item_id': item_id,
-                            'parent_category': current_type
+                            'parent_category': parent_category,
+                            'playlist_name': playlist_name,
+                            'playlist_by': playlist_by,
+                            'playlist_number': playlist_number
                             }
                     continue
 
