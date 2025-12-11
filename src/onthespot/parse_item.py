@@ -218,6 +218,42 @@ def parsingworker():
                                 except TypeError:
                                     logger.error(f'TypeError for {item}')
                             logger.info(f"Finished adding {total_items} items from playlist '{playlist_name}' to pending queue")
+                            
+                            # Download playlist cover after adding all items
+                            if playlist_image_url and config.get('save_album_cover'):
+                                import requests
+                                from PIL import Image
+                                from io import BytesIO
+                                import os
+                                from .utils import sanitize_data
+                                
+                                try:
+                                    # Calculate playlist directory from formatter
+                                    playlist_path_template = config.get('playlist_path_formatter')
+                                    # Extract just the directory part (everything before the last /)
+                                    dir_template = playlist_path_template.rsplit('/', 1)[0] if '/' in playlist_path_template else ''
+                                    
+                                    # Format with available variables
+                                    playlist_dir = dir_template.format(
+                                        playlist_name=sanitize_data(playlist_name),
+                                        playlist_owner=sanitize_data(playlist_by),
+                                        playlist_by=sanitize_data(playlist_by)
+                                    )
+                                    
+                                    # Get full path
+                                    dl_root = config.get('audio_download_path')
+                                    full_playlist_dir = os.path.join(dl_root, playlist_dir)
+                                    os.makedirs(full_playlist_dir, exist_ok=True)
+                                    
+                                    cover_path = os.path.join(full_playlist_dir, 'cover.jpg')
+                                    logger.info(f"Downloading playlist cover for '{playlist_name}' to: {cover_path}")
+                                    img = Image.open(BytesIO(requests.get(playlist_image_url).content))
+                                    if img.mode != 'RGB':
+                                        img = img.convert('RGB')
+                                    img.save(cover_path, format='JPEG')
+                                    logger.info(f"Saved playlist cover: {cover_path}")
+                                except Exception as e:
+                                    logger.error(f"Failed to save playlist cover: {e}")
                         finally:
                             # Always clear batch parse flag
                             runtimedata.set_batch_parse_flag(False)
