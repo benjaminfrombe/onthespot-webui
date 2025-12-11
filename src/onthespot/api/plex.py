@@ -286,6 +286,36 @@ class PlexAPI:
             logger.exception("Full traceback:")
             return {'success': False, 'error': error_msg}
 
+    def scan_library(self):
+        """Trigger a library scan on Plex server"""
+        if not self.auth_token:
+            logger.warning("Cannot scan library: No Plex auth token configured")
+            return {'success': False, 'error': 'No auth token'}
+        
+        if not self.library_section_id:
+            logger.warning("Cannot scan library: No library section ID configured")
+            return {'success': False, 'error': 'No library section ID'}
+        
+        try:
+            url = f"{self.server_url}/library/sections/{self.library_section_id}/refresh"
+            params = {'X-Plex-Token': self.auth_token}
+            
+            logger.info(f"Triggering Plex library scan for section {self.library_section_id}...")
+            response = requests.post(url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            logger.info(f"✓ Plex library scan triggered successfully")
+            return {'success': True}
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Failed to trigger library scan: {str(e)}"
+            logger.error(f"✗ {error_msg}")
+            return {'success': False, 'error': error_msg}
+        except Exception as e:
+            error_msg = f"Unexpected error during library scan: {str(e)}"
+            logger.error(f"✗ {error_msg}")
+            return {'success': False, 'error': error_msg}
+
     def disconnect(self):
         """Clear Plex authentication"""
         config.set('plex_auth_token', None)

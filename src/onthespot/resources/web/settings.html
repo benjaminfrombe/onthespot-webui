@@ -612,6 +612,11 @@
                     <small style="display: block; color: #666; margin-top: 5px;">Music library section ID for playlist imports</small>
                 </div>
                 <div class="setting-row">
+                    <label for="plex_auto_scan">Auto-Scan Library After Downloads</label>
+                    <input type="checkbox" id="plex_auto_scan" {% if config.plex_auto_scan %}checked{% endif %}>
+                    <small style="display: block; color: #666; margin-top: 5px;">Automatically trigger Plex library scan when all downloads complete</small>
+                </div>
+                <div class="setting-row">
                     <label></label>
                     <button onclick="window.location.href='/plex_playlists'" style="padding: 10px 20px; background: linear-gradient(135deg, #e5a00d, #f1c40f); border: none; border-radius: 6px; color: white; font-size: 14px; font-weight: 500; cursor: pointer;">
                         Import Playlists to Plex
@@ -1311,6 +1316,7 @@
                 plex_server_url: document.getElementById('plex_server_url').value,
                 plex_auth_token: document.getElementById('plex_auth_token').value,
                 plex_library_section_id: document.getElementById('plex_library_section_id').value,
+                plex_auto_scan: document.getElementById('plex_auto_scan').checked,
                 explicit_label: document.getElementById('explicit_label').value,
                 download_copy_btn: document.getElementById('download_copy_btn').checked,
                 download_open_btn: document.getElementById('download_open_btn').checked,

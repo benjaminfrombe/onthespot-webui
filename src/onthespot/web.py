@@ -202,6 +202,19 @@ class AutoClearWorker(threading.Thread):
                             # First time we've noticed everything is done
                             self.last_all_done_time = time.time()
                             logger.info(f"All downloads complete. Will auto-clear in {self.CLEAR_DELAY_SECONDS} seconds...")
+                            
+                            # Trigger Plex library scan if enabled
+                            if config.get('plex_auto_scan', False):
+                                try:
+                                    from .api.plex import plex_api
+                                    logger.info("Triggering Plex library scan after download completion...")
+                                    result = plex_api.scan_library()
+                                    if result.get('success'):
+                                        logger.info("Plex library scan triggered successfully")
+                                    else:
+                                        logger.warning(f"Plex library scan failed: {result.get('error')}")
+                                except Exception as e:
+                                    logger.error(f"Failed to trigger Plex library scan: {e}")
                         else:
                             # Check if enough time has passed
                             elapsed = time.time() - self.last_all_done_time
