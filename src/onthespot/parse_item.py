@@ -226,7 +226,7 @@ def parsingworker():
                                 }
                                 playlist_dir = SafeFormatter().format(playlist_path_template, **playlist_vars)
                                 # Sanitize
-                                playlist_dir = sanitize_data(playlist_dir, True)
+                                playlist_dir = sanitize_data(playlist_dir)
                                 
                                 # Get full path
                                 dl_root = config.get('audio_download_path')
