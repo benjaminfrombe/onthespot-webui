@@ -755,7 +755,7 @@ def get_items():
                     track = int(track)
                 except (ValueError, TypeError):
                     track = 0
-            logger.debug(f"Sort key for {local_id}: album='{album}', track={track}")
+            logger.info(f"Sort key for {local_id}: album='{album}', track={track}")
             return (album, track)
         
         sorted_items = sorted(download_queue.items(), key=sort_key)
