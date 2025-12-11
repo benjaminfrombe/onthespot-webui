@@ -127,6 +127,11 @@ def kill_all_workers():
     """Kill all registered worker threads"""
     global worker_threads
     logger_.warning("Killing all worker threads...")
+    
+    # Log queue status before killing workers
+    with pending_lock:
+        pending_count = len(pending)
+    logger_.info(f"Pending queue has {pending_count} items before worker restart")
 
     with worker_threads_lock:
         for worker in worker_threads:
@@ -139,6 +144,11 @@ def kill_all_workers():
         # Clear the list
         worker_threads = []
         logger_.info("All workers stopped and cleared")
+        
+    # Log queue status after restart for verification
+    with pending_lock:
+        pending_count_after = len(pending)
+    logger_.info(f"Pending queue has {pending_count_after} items after worker restart - these will be processed by new workers")
 
 
 def increment_failure_count(account_index=None):

@@ -115,12 +115,14 @@ class QueueWorker(threading.Thread):
         self.is_running = True
 
     def run(self):
+        logger.info("QueueWorker started")
         while self.is_running:
             try:
                 if pending:
                     local_id = next(iter(pending))
                     with pending_lock:
                         item = pending.pop(local_id)
+                    logger.debug(f"QueueWorker processing item: {local_id} (service: {item['item_service']}, type: {item['item_type']})")
                     token = get_account_token(item['item_service'])
                     item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'])
                     if item_metadata:
