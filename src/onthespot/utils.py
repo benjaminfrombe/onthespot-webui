@@ -657,7 +657,10 @@ def embed_metadata(item, metadata):
 
 
 def set_music_thumbnail(filename, metadata):
-    if metadata['image_url']:
+    # For playlist tracks, use playlist cover URL if available
+    image_url = metadata.get('playlist_image_url') if metadata.get('parent_category') == 'playlist' else metadata.get('image_url')
+    
+    if image_url:
         target_path = os.path.abspath(filename)
         file_name = os.path.basename(target_path)
         filetype = os.path.splitext(file_name)[1]
@@ -675,8 +678,8 @@ def set_music_thumbnail(filename, metadata):
 
         # Fetch thumbnail only if it doesn't exist (avoid re-downloading for each playlist track)
         if not os.path.isfile(image_path):
-            logger.info(f"Fetching item thumbnail")
-            img = Image.open(BytesIO(requests.get(metadata['image_url']).content))
+            logger.info(f"Fetching playlist cover image" if metadata.get('parent_category') == 'playlist' else f"Fetching item thumbnail")
+            img = Image.open(BytesIO(requests.get(image_url).content))
             buf = BytesIO()
             if img.mode != 'RGB':
                 img = img.convert('RGB')

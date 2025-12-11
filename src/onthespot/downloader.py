@@ -1330,6 +1330,9 @@ class DownloadWorker:
                                 item_metadata['disc_number'] = 1
                                 item_metadata['total_discs'] = 1
                                 item_metadata['parent_category'] = 'playlist'  # Pass to set_music_thumbnail for cover.jpg handling
+                                # Use playlist cover instead of track's album cover
+                                if item.get('playlist_image_url'):
+                                    item_metadata['playlist_image_url'] = item.get('playlist_image_url')
                                 logger.info(f"Playlist track: setting album to '{item_metadata['album']}', album_artist='Various Artists', disc=1/1, and album_type='compilation'")
 
                             embed_metadata(item, item_metadata)

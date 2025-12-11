@@ -197,53 +197,6 @@ def parsingworker():
                             total_items = len(items)
                             logger.info(f"Playlist '{playlist_name}' has {total_items} items, adding to pending queue...")
                             
-                            # Save playlist cover.jpg upfront before downloading tracks
-                            if playlist_image_url and config.get('save_album_cover'):
-                                from .utils import format_item_path, sanitize_data
-                                import requests
-                                from PIL import Image
-                                from io import BytesIO
-                                import os
-                                
-                                # Build playlist directory path using only available variables
-                                playlist_path_template = config.get('playlist_path_formatter')
-                                # Use a dict that provides defaults for missing keys
-                                from string import Formatter
-                                class SafeFormatter(Formatter):
-                                    def get_value(self, key, args, kwargs):
-                                        if isinstance(key, str):
-                                            return kwargs.get(key, '')
-                                        return super().get_value(key, args, kwargs)
-                                
-                                playlist_vars = {
-                                    'playlist_name': playlist_name,
-                                    'playlist_owner': playlist_by,
-                                    'playlist_by': playlist_by,
-                                    'playlist_number': '',  # Not applicable for playlist directory
-                                    'track_number': '',
-                                    'name': playlist_name,
-                                    'album': playlist_name
-                                }
-                                playlist_dir = SafeFormatter().format(playlist_path_template, **playlist_vars)
-                                # Sanitize
-                                playlist_dir = sanitize_data(playlist_dir)
-                                
-                                # Get full path
-                                dl_root = config.get('audio_download_path')
-                                full_playlist_dir = os.path.join(dl_root, playlist_dir)
-                                os.makedirs(full_playlist_dir, exist_ok=True)
-                                
-                                cover_path = os.path.join(full_playlist_dir, 'cover.jpg')
-                                # Always download playlist cover (don't check if exists)
-                                try:
-                                    logger.info(f"Downloading playlist cover for '{playlist_name}' from URL: {playlist_image_url}")
-                                    img = Image.open(BytesIO(requests.get(playlist_image_url).content))
-                                    if img.mode != 'RGB':
-                                        img = img.convert('RGB')
-                                    img.save(cover_path, format='JPEG')
-                                    logger.info(f"Saved playlist cover: {cover_path}")
-                                except Exception as e:
-                                    logger.error(f"Failed to save playlist cover: {e}")
                             for index, item in enumerate(items):
                                 try:
                                     item_id = item['track']['id']
@@ -259,7 +212,8 @@ def parsingworker():
                                             'playlist_name': playlist_name,
                                             'playlist_by': playlist_by,
                                             'playlist_number': str(index + 1),
-                                            'playlist_total': total_items
+                                            'playlist_total': total_items,
+                                            'playlist_image_url': playlist_image_url
                                             }
                                 except TypeError:
                                     logger.error(f'TypeError for {item}')
