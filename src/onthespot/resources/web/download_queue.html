@@ -736,7 +736,8 @@
         }
 
         function getAlbumName(item) {
-            return item.album_name ?? item.item_album_name ?? '';
+            // Prioritize playlist_name for proper grouping, fall back to album name
+            return item.playlist_name ?? item.album_name ?? item.item_album_name ?? '';
         }
 
         function sortItems(items) {
