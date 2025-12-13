@@ -28,7 +28,23 @@
     <div class="container">
         <div class="status-bar">
             <div style="display: flex; align-items: center;">
+                <p>Version: {{ version }}</p>
+                <p>|</p>
                 <p>Total Downloads: {{ statistics }}</p>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button onclick="clearCache(event)" class="download-action-button">
+                    <img id="collapse_button_icon" src="/icons/trash.png" loading="lazy" style="width: 15px; height: 15px;">
+                    Clear Cache
+                </button>
+                <button onclick="exportLogs(event)" class="download-action-button">
+                    <img id="collapse_button_icon" src="/icons/export_file.png" loading="lazy" style="width: 15px; height: 15px;">
+                    Export Logs
+                </button>
+                <button href="https://justin025.github.io/about.html" onclick="window.open('https://justin025.github.io/about.html', '_blank');" class="download-action-button">
+                    <img id="collapse_button_icon" src="/icons/filled_heart.png" loading="lazy" style="width: 15px; height: 15px;">
+                    Donate
                 </button>
             </div>
         </div>
