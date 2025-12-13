@@ -680,7 +680,7 @@
                         <col class="hide-on-tablet hide-on-mobile" style="width: 12%;"> <!-- By -->
                         <col class="hide-on-mobile" style="width: 10%;"> <!-- Service -->
                         <col style="width: 140px;"> <!-- Status -->
-                        <col class="hide-on-tablet hide-on-mobile" style="width: 15%;"> <!-- Progress -->
+                        <col class="hide-on-tablet hide-on-mobile" style="width: 15%; display: none;"> <!-- Progress (hidden) -->
                         <col style="width: 60px;"> <!-- Action -->
                     </colgroup>
                     <thead>
@@ -694,7 +694,7 @@
                             <th class="col-by hide-on-tablet hide-on-mobile" data-sort="item_by">By</th>
                             <th class="col-service hide-on-mobile" data-sort="item_service">Service</th>
                             <th class="col-status" data-sort="item_status">Status</th>
-                            <th class="col-progress hide-on-tablet hide-on-mobile" data-sort="progress">Progress</th>
+                            <th class="col-progress hide-on-tablet hide-on-mobile" data-sort="progress" style="display: none;">Progress</th>
                             <th class="col-action">Action</th>
                         </tr>
                     </thead>
@@ -1156,10 +1156,11 @@
             statusCell.innerHTML = createStatusBadge(item.item_status, progress);
             row.appendChild(statusCell);
 
-            // Progress bar
+            // Progress bar (hidden)
             const progressCell = document.createElement('td');
             progressCell.className = 'col-progress hide-on-tablet hide-on-mobile';
             progressCell.dataset.cell = 'progress';
+            progressCell.style.display = 'none';
             progressCell.innerHTML = `
                 <div class="progress-container">
                     <div class="progress-bar-fill" style="width: ${progress}%;">
