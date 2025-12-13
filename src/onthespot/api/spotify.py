@@ -891,7 +891,7 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
         return []
 
 
-def spotify_get_track_metadata(token, item_id, _retry=False):
+def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
     headers = {}
     try:
         headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
@@ -911,7 +911,15 @@ def spotify_get_track_metadata(token, item_id, _retry=False):
     track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market=from_token', headers=headers)
     album_data = make_call(f"{BASE_URL}/albums/{track_data.get('tracks', [])[0].get('album', {}).get('id')}", headers=headers)
     artist_data = make_call(f"{BASE_URL}/artists/{track_data.get('tracks', [])[0].get('artists', [])[0].get('id')}", headers=headers)
-    album_track_ids = spotify_get_album_track_ids(token, track_data.get('tracks', [])[0].get('album', {}).get('id'))
+    
+    # Lock ONLY the album track ID fetch (critical section for duplicate prevention)
+    if album_lock:
+        album_lock.acquire()
+    try:
+        album_track_ids = spotify_get_album_track_ids(token, track_data.get('tracks', [])[0].get('album', {}).get('id'))
+    finally:
+        if album_lock:
+            album_lock.release()
     try:
         track_audio_data = make_call(f'{BASE_URL}/audio-features/{item_id}', headers=headers)
     except Exception:

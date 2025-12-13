@@ -432,20 +432,21 @@ class DownloadWorker:
                 # Get account index for failure tracking
                 account_index = self._find_account_index(item_service, token) if token else None
 
-                # For Spotify albums, acquire album lock BEFORE metadata fetch to serialize track_number lookup
-                album_lock = None
-                album_key = None
-                if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
-                    album_key = f"{item_service}:{item.get('parent_id')}"  # Use parent_id (album_id) for shared lock
-                    with album_download_locks_lock:
-                        if album_key not in album_download_locks:
-                            album_download_locks[album_key] = threading.Lock()
-                        album_lock = album_download_locks[album_key]
-                    album_lock.acquire()
-                    logger.debug(f"Acquired album lock for metadata fetch: {album_key}")
-
                 try:
-                    item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                    # For Spotify albums, we'll pass the album lock to the metadata function
+                    # so it can minimize the critical section
+                    album_lock_ctx = None
+                    if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                        album_key = f"{item_service}:{item.get('parent_id')}"
+                        with album_download_locks_lock:
+                            if album_key not in album_download_locks:
+                                album_download_locks[album_key] = threading.Lock()
+                            album_lock_ctx = album_download_locks[album_key]
+                    
+                    if album_lock_ctx:
+                        item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                    else:
+                        item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
 
                     # album number shim from enumerated items, i hate youtube
                     if item_service == 'youtube_music' and item.get('parent_category') == 'album':
@@ -456,16 +457,7 @@ class DownloadWorker:
                         item_metadata.update({'track_number': item['playlist_number']})
 
                     item_path = format_item_path(item, item_metadata)
-                    
-                    # Release album lock after metadata is fetched (will reacquire for stream)
-                    if album_lock:
-                        album_lock.release()
-                        album_lock = None
-                        logger.debug(f"Released album lock after metadata fetch")
                 except (Exception, KeyError) as e:
-                    if album_lock:
-                        album_lock.release()
-                        album_lock = None
                     logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                     item['item_status'] = "Failed"
                     self.update_progress(item, "Failed", 0)
