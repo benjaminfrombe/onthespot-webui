@@ -434,8 +434,9 @@ class DownloadWorker:
 
                 # For Spotify albums, acquire album lock BEFORE metadata fetch to serialize track_number lookup
                 album_lock = None
-                if item_service == "spotify" and item.get('parent_category') == 'album':
-                    album_key = f"{item_service}:{item.get('item_id', item_id)}"  # Use item_id as temp album_id
+                album_key = None
+                if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                    album_key = f"{item_service}:{item.get('parent_id')}"  # Use parent_id (album_id) for shared lock
                     with album_download_locks_lock:
                         if album_key not in album_download_locks:
                             album_download_locks[album_key] = threading.Lock()
@@ -599,24 +600,23 @@ class DownloadWorker:
                             try:
                                 # For Spotify albums, reacquire album lock for stream acquisition
                                 # For non-album items, no lock needed
-                                if item.get('parent_category') == 'album':
-                                    album_key = f"{item_service}:{item_metadata.get('album_id', item_id)}"
+                                if item.get('parent_category') == 'album' and item.get('parent_id'):
+                                    stream_album_key = f"{item_service}:{item.get('parent_id')}"
                                     with album_download_locks_lock:
-                                        if album_key not in album_download_locks:
-                                            album_download_locks[album_key] = threading.Lock()
-                                        album_lock = album_download_locks[album_key]
+                                        if stream_album_key not in album_download_locks:
+                                            album_download_locks[stream_album_key] = threading.Lock()
+                                        stream_album_lock = album_download_locks[stream_album_key]
                                     
                                     # Acquire album lock for stream initialization
-                                    logger.debug(f"Reacquiring album lock for stream: {album_key}")
-                                    album_lock.acquire()
+                                    logger.debug(f"Reacquiring album lock for stream: {stream_album_key}")
+                                    stream_album_lock.acquire()
                                     try:
-                                        logger.debug(f"Acquired album lock, getting stream: {album_key}")
+                                        logger.debug(f"Acquired album lock, getting stream: {stream_album_key}")
                                         # Get stream (with account fallback)
                                         stream, token, _ = self._try_get_spotify_stream(item, item_id, item_type, token, quality)
-                                        logger.debug(f"Stream acquired, released lock: {album_key}")
+                                        logger.debug(f"Stream acquired, released lock: {stream_album_key}")
                                     finally:
-                                        album_lock.release()
-                                        album_lock = None
+                                        stream_album_lock.release()
                                 else:
                                     # Non-album items don't need locking
                                     stream, token, _ = self._try_get_spotify_stream(item, item_id, item_type, token, quality)

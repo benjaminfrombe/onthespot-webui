@@ -426,6 +426,7 @@ def parsingworker():
                                     'item_type': 'track',
                                     'item_id': track_id,
                                     'parent_category': current_type,
+                                    'parent_id': current_id if current_type == 'album' else '',  # Store album_id for locking
                                     'playlist_name': playlist_name,
                                     'playlist_by': playlist_by,
                                     'playlist_number': str(index + 1),
