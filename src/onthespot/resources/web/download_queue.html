@@ -485,8 +485,8 @@
             }
 
             th, td {
-                padding: 10px 8px;
-                font-size: 12px;
+                padding: 8px 4px;
+                font-size: 11px;
             }
 
             .hide-on-mobile {
@@ -500,15 +500,17 @@
 
             /* Mobile columns: minimize fixed-width columns */
             .mobile-thumbnail-col {
-                width: 50px;
-                padding-right: 4px !important;
+                width: 36px;
+                padding-right: 2px !important;
+                padding-left: 2px !important;
             }
 
             .col-track {
-                width: 30px;
+                width: 28px;
                 white-space: nowrap;
                 text-align: center;
-                padding-left: 4px !important;
+                padding-left: 2px !important;
+                padding-right: 2px !important;
             }
 
             .col-name {
@@ -520,14 +522,16 @@
                 width: 1%;
                 white-space: nowrap;
                 text-align: right;
-                padding-right: 8px !important;
+                padding-right: 4px !important;
+                padding-left: 4px !important;
             }
 
             .col-action {
                 width: 1%;
                 white-space: nowrap;
                 text-align: right;
-                padding-left: 4px !important;
+                padding-left: 2px !important;
+                padding-right: 2px !important;
             }
 
             /* Name cell: expand to fill, with ellipsis */
@@ -552,24 +556,24 @@
             .action-cell {
                 display: flex;
                 justify-content: flex-end;
-                gap: 2px;
+                gap: 1px;
             }
 
             .action-cell .download-action-button {
-                padding: 5px;
-                min-width: 28px;
-                min-height: 28px;
+                padding: 4px;
+                min-width: 26px;
+                min-height: 26px;
             }
 
             .action-cell .download-action-button img {
-                width: 14px;
-                height: 14px;
+                width: 12px;
+                height: 12px;
             }
         }
 
         @media screen and (max-width: 480px) {
             .container {
-                padding: 12px;
+                padding: 8px;
             }
 
             .filters-grid {
@@ -1029,8 +1033,9 @@
                 img.src = item.item_thumbnail;
                 img.className = 'item-thumbnail';
                 img.loading = 'lazy';
-                img.style.width = '40px';
-                img.style.height = '40px';
+                img.style.width = '32px';
+                img.style.height = '32px';
+                img.style.maxWidth = '32px';
                 img.onclick = function(e) { toggleImagePreview(item.item_thumbnail, e.target); };
                 mobileImgCell.appendChild(img);
             } else {
