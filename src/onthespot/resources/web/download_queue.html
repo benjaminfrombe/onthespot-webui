@@ -292,9 +292,16 @@
             bottom: 0;
             background: linear-gradient(90deg, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
             border-radius: 20px;
-            transition: width 0.3s ease-out;
+            transition: width 0.3s ease-out, opacity 0.2s ease;
             z-index: -1;
             width: var(--progress, 0%);
+            min-width: 0;
+            opacity: 1;
+        }
+        
+        /* Hide progress fill when at 0% */
+        .status-badge.status-downloading[style*="--progress: 0%"]::before {
+            opacity: 0;
         }
         
         /* Fallback background for when progress is 0 */
