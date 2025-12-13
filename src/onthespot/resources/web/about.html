@@ -23,22 +23,12 @@
             <a class="active" href="/about">About</a>
             <a href="/api/logout" style="color: #e74c3c;">Logout</a>
         </div>
-                <p>|</p>
-                <p style="margin-right: 5px; margin-left: 15px;">Total Downloads: {{ statistics }}</p>
-            </div>
+    </div>
 
+    <div class="container">
+        <div class="status-bar">
             <div style="display: flex; align-items: center;">
-                <button onclick="clearCache(event)" class="download-action-button" class="hide-on-mobile" style="margin-right: 5px;">
-                    <img id="collapse_button_icon" src="/icons/trash.png" loading="lazy" style="width: 15px; height: 15px;">
-                    Clear Cache
-                </button>
-                <button onclick="exportLogs(event)" class="download-action-button" class="hide-on-mobile" style="margin-right: 5px;">
-                    <img id="collapse_button_icon" src="/icons/export_file.png" loading="lazy" style="width: 15px; height: 15px;">
-                    Export Logs
-                </button>
-                <button href="https://justin025.github.io/about.html" onclick="window.open('https://justin025.github.io/about.html', '_blank');" class="download-action-button" class="hide-on-mobile" style="margin-right: 5px;">
-                    <img id="collapse_button_icon" src="/icons/filled_heart.png" loading="lazy" style="width: 15px; height: 15px;">
-                    Donate
+                <p>Total Downloads: {{ statistics }}</p>
                 </button>
             </div>
         </div>
