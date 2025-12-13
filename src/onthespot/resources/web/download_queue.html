@@ -1267,21 +1267,36 @@
         function updateProgressHeader() {
             let total = 0;
             let completed = 0;
+            let totalProgress = 0;
             
             Object.values(currentData).forEach(item => {
                 total++;
+                
+                // Count completed items
                 if (['Downloaded', 'Already Exists', 'Cancelled'].includes(item.item_status)) {
                     completed++;
                 }
+                
+                // Sum up individual progress for overall progress bar
+                if (item.item_status === 'Downloaded' || item.item_status === 'Already Exists') {
+                    totalProgress += 100;
+                } else if (item.item_status === 'Downloading') {
+                    totalProgress += (item.progress || 0);
+                } else if (item.item_status === 'Cancelled') {
+                    totalProgress += 100; // Count cancelled as complete for progress bar
+                }
+                // Waiting, Failed, etc. contribute 0%
             });
             
-            const percent = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
-            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${percent}%`;
+            const completedPercent = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
+            const overallProgress = total > 0 ? (totalProgress / total).toFixed(1) : 0;
             
-            // Update global progress bar background
+            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${overallProgress}%`;
+            
+            // Update global progress bar background based on actual download progress
             const statusBar = document.querySelector('.status-bar');
             if (statusBar) {
-                statusBar.style.backgroundSize = `${percent}% 100%, 100% 100%`;
+                statusBar.style.backgroundSize = `${overallProgress}% 100%, 100% 100%`;
             }
         }
 
