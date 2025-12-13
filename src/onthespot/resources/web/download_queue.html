@@ -277,37 +277,11 @@
         }
 
         .status-downloading {
-            background: transparent;
+            background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%) no-repeat left center,
+                        rgba(59, 130, 246, 0.2);
+            background-size: 0% 100%, 100% 100%;
             color: #fff;
-            overflow: visible;
-            isolation: isolate;
-        }
-
-        /* Progress bar fill for downloading badge */
-        .status-badge.status-downloading::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            background: linear-gradient(90deg, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
-            border-radius: 20px;
-            transition: width 0.3s ease-out;
-            z-index: -1;
-            width: var(--progress, 0%);
-        }
-        
-        /* Fallback background for when progress is 0 */
-        .status-badge.status-downloading::after {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(59, 130, 246, 0.2);
-            border-radius: 20px;
-            z-index: -2;
+            transition: background-size 0.3s ease-out;
         }
 
         .status-waiting {
@@ -948,12 +922,8 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        // Update progress for downloading items (only if > 0)
-                        if (newProgress > 0) {
-                            statusBadge.style.setProperty('--progress', `${newProgress}%`);
-                        } else {
-                            statusBadge.style.removeProperty('--progress');
-                        }
+                        // Update progress for downloading items using background-size
+                        statusBadge.style.backgroundSize = `${newProgress}% 100%, 100% 100%`;
                     }
                 }
 
@@ -1066,9 +1036,9 @@
             const className = statusClasses[status] || '';
             const displayText = status === 'Already Exists' ? 'Exists' : status;
             
-            // Add progress for downloading status (only if > 0 to avoid rendering line at 0%)
-            if (status === 'Downloading' && progress > 0) {
-                return `<span class="status-badge ${className}" style="--progress: ${progress}%">${displayText || 'N/A'}</span>`;
+            // Add progress for downloading status using background-size
+            if (status === 'Downloading') {
+                return `<span class="status-badge ${className}" style="background-size: ${progress}% 100%, 100% 100%;">${displayText || 'N/A'}</span>`;
             }
             
             return `<span class="status-badge ${className}">${displayText || 'N/A'}</span>`;
