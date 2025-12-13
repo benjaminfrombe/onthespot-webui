@@ -1264,6 +1264,8 @@
         }
 
         // ============= PROGRESS HEADER =============
+        let maxProgressAchieved = 0; // Track highest progress to prevent regression
+        
         function updateProgressHeader() {
             let total = 0;
             let completed = 0;
@@ -1284,19 +1286,43 @@
                     totalProgress += (item.progress || 0);
                 } else if (item.item_status === 'Cancelled') {
                     totalProgress += 100; // Count cancelled as complete for progress bar
+                } else if (item.item_status === 'Waiting' || item.item_status === 'Failed') {
+                    // Check if this item was previously at a higher progress and maintain it
+                    const itemId = item.item_id;
+                    if (!window.itemProgressHistory) {
+                        window.itemProgressHistory = {};
+                    }
+                    totalProgress += (window.itemProgressHistory[itemId] || 0);
                 }
-                // Waiting, Failed, etc. contribute 0%
+                
+                // Store progress history for each item
+                if (!window.itemProgressHistory) {
+                    window.itemProgressHistory = {};
+                }
+                const itemId = item.item_id;
+                const currentItemProgress = item.item_status === 'Downloaded' || item.item_status === 'Already Exists' ? 100 :
+                                           item.item_status === 'Downloading' ? (item.progress || 0) :
+                                           item.item_status === 'Cancelled' ? 100 : 0;
+                
+                if (!window.itemProgressHistory[itemId] || currentItemProgress > window.itemProgressHistory[itemId]) {
+                    window.itemProgressHistory[itemId] = currentItemProgress;
+                }
             });
             
             const completedPercent = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
             const overallProgress = total > 0 ? (totalProgress / total).toFixed(1) : 0;
             
-            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${overallProgress}%`;
+            // Only allow progress to increase, never decrease
+            if (parseFloat(overallProgress) > maxProgressAchieved) {
+                maxProgressAchieved = parseFloat(overallProgress);
+            }
+            
+            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${maxProgressAchieved.toFixed(1)}%`;
             
             // Update global progress bar background based on actual download progress
             const statusBar = document.querySelector('.status-bar');
             if (statusBar) {
-                statusBar.style.backgroundSize = `${overallProgress}% 100%, 100% 100%`;
+                statusBar.style.backgroundSize = `${maxProgressAchieved}% 100%, 100% 100%`;
             }
         }
 
