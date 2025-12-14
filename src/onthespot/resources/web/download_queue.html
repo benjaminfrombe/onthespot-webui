@@ -934,13 +934,8 @@
             sortItems(newItems);
             const newIds = newItems.map(item => item.local_id);
 
-            // If length changed, rebuild
-            if (newIds.length !== lastRenderedIds.length) {
-                return true;
-            }
-
-            // If order changed, rebuild
-            for (let i = 0; i < newIds.length; i++) {
+            // If order changed, rebuild (but not if just length changed - we can add rows)
+            for (let i = 0; i < Math.min(newIds.length, lastRenderedIds.length); i++) {
                 if (newIds[i] !== lastRenderedIds[i]) {
                     return true;
                 }
@@ -1034,7 +1029,40 @@
             }
             
             if (!forceRebuild && !needsFullRebuild(currentData)) {
+                // Filter and sort items
+                const filteredItems = itemsArray.filter(shouldShowItem);
+                sortItems(filteredItems);
+                const newIds = filteredItems.map(item => item.local_id);
+                
+                // Check for new items to add
+                const newItemIds = newIds.filter(id => !lastRenderedIds.includes(id));
+                const removedItemIds = lastRenderedIds.filter(id => !newIds.includes(id));
+                
+                // Remove rows for deleted items
+                removedItemIds.forEach(id => {
+                    const row = document.querySelector(`tr[data-item-id="${id}"]`);
+                    if (row) {
+                        row.remove();
+                    }
+                });
+                
+                // Add new rows
+                if (newItemIds.length > 0) {
+                    newItemIds.forEach(id => {
+                        const item = currentData[id];
+                        if (item) {
+                            const row = createTableRow(item);
+                            tableBody.appendChild(row);
+                        }
+                    });
+                }
+                
+                // Update existing rows
                 updateExistingRows(currentData);
+                
+                // Update last rendered IDs
+                lastRenderedIds = newIds;
+                
                 updateProgressHeader();
                 return;
             }
