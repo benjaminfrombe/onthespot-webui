@@ -342,7 +342,7 @@ class AutoClearWorker(threading.Thread):
                                         with system_notifications_lock:
                                             system_notifications.append({
                                                 'timestamp': time.time(),
-                                                'message': 'Plex library scan initiated',
+                                                'message': 'Added to Plex',
                                                 'type': 'success'
                                             })
                                     else:
