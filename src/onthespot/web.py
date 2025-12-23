@@ -700,7 +700,11 @@ def download_queue_page():
     config_path = os.path.join(config_dir(), 'otsconfig.json')
     with open(config_path, 'r') as config_file:
         config_data = json.load(config_file)
-    return render_template('download_queue.html', config=config_data, user=current_user)
+    if socketio.async_mode == "threading":
+        socketio_transports = ["polling"]
+    else:
+        socketio_transports = ["websocket", "polling"]
+    return render_template('download_queue.html', config=config_data, user=current_user, socketio_transports=socketio_transports)
 
 
 @app.route('/settings')

@@ -1375,11 +1375,12 @@
         let socket = null;
         let reconnectAttempts = 0;
         const MAX_RECONNECT_ATTEMPTS = 10;
+        const socketTransports = {{ socketio_transports|tojson }};
         
         function connectWebSocket() {
             console.log('Connecting to WebSocket...');
             socket = io({
-                transports: ['websocket', 'polling'],
+                transports: socketTransports,
                 reconnection: true,
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
