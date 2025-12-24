@@ -97,6 +97,16 @@ def _spotify_get_app_access_token():
         return access_token
 
 
+def _spotify_get_public_api_headers(token, context):
+    app_token = _spotify_get_app_access_token()
+    if app_token:
+        logger.info("Spotify %s using app token.", context)
+        return {"Authorization": f"Bearer {app_token}"}, "app"
+
+    logger.info("Spotify %s using session token.", context)
+    return {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}, "session"
+
+
 def _spotify_extract_year(value):
     if not value:
         return None
@@ -524,7 +534,7 @@ def spotify_get_artist_album_ids(token, artist_id, _retry=False):
     while True:
         headers = {}
         try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
+            headers, auth_source = _spotify_get_public_api_headers(token, "artist albums")
         except (RuntimeError, OSError) as e:
             if _retry:
                 logger.error(f"Failed to get token after retry for artist {artist_id}: {e}")
@@ -540,6 +550,9 @@ def spotify_get_artist_album_ids(token, artist_id, _retry=False):
 
         url = f'{BASE_URL}/artists/{artist_id}/albums?include_groups=album%2Csingle&limit={limit}&offset={offset}' #%2Cappears_on%2Ccompilation
         artist_data = make_call(url, headers=headers)
+        if artist_data is None:
+            logger.error("Spotify artist albums request failed (%s) for %s", auth_source, artist_id)
+            return []
 
         offset += limit
         items.extend(artist_data['items'])
@@ -812,7 +825,7 @@ def spotify_get_album_track_ids(token, album_id, _retry=False):
         url=f'{BASE_URL}/albums/{album_id}/tracks?offset={offset}&limit={limit}'
         headers = {}
         try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
+            headers, auth_source = _spotify_get_public_api_headers(token, "album tracks")
         except (RuntimeError, OSError) as e:
             if _retry:
                 logger.error(f"Failed to get token after retry for album {album_id}: {e}")
@@ -827,6 +840,9 @@ def spotify_get_album_track_ids(token, album_id, _retry=False):
             return spotify_get_album_track_ids(new_token, album_id, _retry=True)
 
         resp = make_call(url, headers=headers, skip_cache=True)
+        if resp is None:
+            logger.error("Spotify album tracks request failed (%s) for %s", auth_source, album_id)
+            return []
 
         offset += limit
         tracks.extend(resp['items'])
@@ -1117,7 +1133,7 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
 def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
     headers = {}
     try:
-        headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
+        headers, auth_source = _spotify_get_public_api_headers(token, "track metadata")
     except (RuntimeError, OSError) as e:
         if _retry:
             logger.error(f"Failed to get token after retry for track {item_id}: {e}")
@@ -1132,6 +1148,9 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         return spotify_get_track_metadata(new_token, item_id, _retry=True)
 
     track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market=from_token', headers=headers)
+    if not track_data:
+        logger.error("Spotify track metadata request failed (%s) for %s", auth_source, item_id)
+        return {}
     album_data = make_call(f"{BASE_URL}/albums/{track_data.get('tracks', [])[0].get('album', {}).get('id')}", headers=headers)
     artist_data = make_call(f"{BASE_URL}/artists/{track_data.get('tracks', [])[0].get('artists', [])[0].get('id')}", headers=headers)
     
@@ -1147,8 +1166,18 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         track_audio_data = make_call(f'{BASE_URL}/audio-features/{item_id}', headers=headers)
     except Exception:
         track_audio_data = ''
+    session_headers = None
     try:
-        credits_data = make_call(f'https://spclient.wg.spotify.com/track-credits-view/v0/experimental/{item_id}/credits', headers=headers)
+        session_headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+    except (RuntimeError, OSError) as e:
+        logger.warning("Spotify credits request missing session token: %s", e)
+
+    try:
+        credits_headers = session_headers or headers
+        credits_data = make_call(
+            f'https://spclient.wg.spotify.com/track-credits-view/v0/experimental/{item_id}/credits',
+            headers=credits_headers,
+        )
     except Exception:
         credits_data = ''
 
