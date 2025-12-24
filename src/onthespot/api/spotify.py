@@ -1147,9 +1147,15 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         # Retry with the new token
         return spotify_get_track_metadata(new_token, item_id, _retry=True)
 
-    track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market=from_token', headers=headers)
+    market_param = "from_token" if auth_source == "session" else "US"
+    track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market={market_param}', headers=headers)
     if not track_data:
-        logger.error("Spotify track metadata request failed (%s) for %s", auth_source, item_id)
+        logger.error(
+            "Spotify track metadata request failed (%s, market=%s) for %s",
+            auth_source,
+            market_param,
+            item_id,
+        )
         return {}
     album_data = make_call(f"{BASE_URL}/albums/{track_data.get('tracks', [])[0].get('album', {}).get('id')}", headers=headers)
     artist_data = make_call(f"{BASE_URL}/artists/{track_data.get('tracks', [])[0].get('artists', [])[0].get('id')}", headers=headers)
