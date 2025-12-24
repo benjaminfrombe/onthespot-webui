@@ -1132,6 +1132,7 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
 
 def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
     headers = {}
+    session_headers = None
     try:
         headers, auth_source = _spotify_get_public_api_headers(token, "track metadata")
     except (RuntimeError, OSError) as e:
@@ -1147,8 +1148,29 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         # Retry with the new token
         return spotify_get_track_metadata(new_token, item_id, _retry=True)
 
+    try:
+        session_headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+    except (RuntimeError, OSError) as e:
+        logger.warning("Spotify session token unavailable for track metadata fallback: %s", e)
+
     market_param = "from_token" if auth_source == "session" else "US"
     track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market={market_param}', headers=headers)
+    if auth_source == "app":
+        is_playable = track_data and track_data.get('tracks', [{}])[0].get('is_playable')
+        if (not track_data or is_playable is False) and session_headers:
+            logger.info(
+                "Spotify track metadata app token fallback to session (market=from_token) for %s",
+                item_id,
+            )
+            fallback_data = make_call(
+                f'{BASE_URL}/tracks?ids={item_id}&market=from_token',
+                headers=session_headers,
+            )
+            if fallback_data:
+                track_data = fallback_data
+                headers = session_headers
+                auth_source = "session-fallback"
+                market_param = "from_token"
     if not track_data:
         logger.error(
             "Spotify track metadata request failed (%s, market=%s) for %s",
@@ -1169,14 +1191,12 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         if album_lock:
             album_lock.release()
     try:
-        track_audio_data = make_call(f'{BASE_URL}/audio-features/{item_id}', headers=headers)
+        track_audio_data = make_call(
+            f'{BASE_URL}/audio-features/{item_id}',
+            headers=session_headers or headers,
+        )
     except Exception:
         track_audio_data = ''
-    session_headers = None
-    try:
-        session_headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
-    except (RuntimeError, OSError) as e:
-        logger.warning("Spotify credits request missing session token: %s", e)
 
     try:
         credits_headers = session_headers or headers
