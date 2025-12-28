@@ -1404,23 +1404,6 @@
         let reconnectAttempts = 0;
         const MAX_RECONNECT_ATTEMPTS = 10;
         const socketTransports = {{ socketio_transports|tojson }};
-        let renderQueued = false;
-        let pendingForceRebuild = false;
-
-        function scheduleRender(forceRebuild = false) {
-            if (forceRebuild) {
-                pendingForceRebuild = true;
-            }
-            if (renderQueued) {
-                return;
-            }
-            renderQueued = true;
-            requestAnimationFrame(() => {
-                renderTable(pendingForceRebuild);
-                renderQueued = false;
-                pendingForceRebuild = false;
-            });
-        }
         
         function connectWebSocket() {
             console.log('Connecting to WebSocket...');
@@ -1443,12 +1426,12 @@
             socket.on('hard_restart', function(data) {
                 console.warn('Hard restart announced by server:', data);
                 hardRestartInProgress = true;
-                scheduleRender(true);
+                renderTable(true);
             });
             
             socket.on('queue_update', function(data) {
                 currentData = data;
-                scheduleRender(false);
+                renderTable(false);
             });
             
             socket.on('disconnect', function() {
@@ -1471,7 +1454,7 @@
                 .then(response => response.json())
                 .then(data => {
                     currentData = data;
-                    scheduleRender(true);
+                    renderTable(true);
                 })
                 .catch(err => console.error('Error fetching initial data:', err));
         }
@@ -1486,7 +1469,7 @@
                     .then(response => response.json())
                     .then(data => {
                         currentData = data;
-                        scheduleRender(forceRebuild);
+                        renderTable(forceRebuild);
                         setTimeout(() => fetchItems(false), fetchInterval);
                     })
                     .catch(err => console.error('Error fetching download queue:', err));
