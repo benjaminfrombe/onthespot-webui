@@ -462,18 +462,57 @@ class WebSocketBroadcaster(threading.Thread):
         super().__init__()
         self.is_running = True
         self.daemon = True
+        self.last_queue_snapshot = {}
+        self.last_full_broadcast = 0
+        self.full_broadcast_interval = 5.0  # Full broadcast every 5 seconds
 
     def run(self):
-        logger.info('WebSocketBroadcaster started')
+        logger.info('WebSocketBroadcaster started - using incremental updates')
         while self.is_running:
             try:
-                time.sleep(0.1)  # Broadcast 10 times per second for real-time updates
+                time.sleep(0.25)  # Check for updates 4 times per second (was 10x/sec)
+                
+                current_time = time.time()
                 
                 with download_queue_lock:
-                    queue_data = dict(download_queue)
+                    current_queue = dict(download_queue)
                 
-                # Emit queue update to all connected clients
-                socketio.emit('queue_update', queue_data, namespace='/')
+                # Detect changes since last broadcast
+                changed_items = {}
+                removed_items = []
+                
+                # Check for new or modified items
+                for item_id, item in current_queue.items():
+                    last_item = self.last_queue_snapshot.get(item_id)
+                    if last_item is None:
+                        # New item
+                        changed_items[item_id] = item
+                    else:
+                        # Check if relevant fields changed (status, progress, last_update_time)
+                        if (item.get('item_status') != last_item.get('item_status') or
+                            item.get('progress') != last_item.get('progress') or
+                            item.get('last_update_time', 0) != last_item.get('last_update_time', 0)):
+                            changed_items[item_id] = item
+                
+                # Check for removed items
+                for item_id in self.last_queue_snapshot:
+                    if item_id not in current_queue:
+                        removed_items.append(item_id)
+                
+                # Update snapshot
+                self.last_queue_snapshot = current_queue
+                
+                # Send incremental update if there are changes
+                if changed_items or removed_items:
+                    socketio.emit('queue_incremental_update', {
+                        'changed': changed_items,
+                        'removed': removed_items
+                    }, namespace='/')
+                
+                # Send full queue periodically or on significant changes
+                if (current_time - self.last_full_broadcast) > self.full_broadcast_interval or len(removed_items) > 10:
+                    socketio.emit('queue_update', current_queue, namespace='/')
+                    self.last_full_broadcast = current_time
                 
             except Exception as e:
                 logger.error(f"Error in WebSocketBroadcaster: {str(e)}")
