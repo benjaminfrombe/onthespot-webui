@@ -43,7 +43,7 @@
 
         /* Progress bar */
         .progress-bar-fill {
-            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: width 0.16s linear;
         }
 
         /* Image preview popup */
@@ -107,7 +107,7 @@
             background: linear-gradient(to right, rgba(76, 175, 80, 0.15) 0%, rgba(34, 197, 94, 0.1) 100%);
             transform-origin: left center;
             transform: scaleX(var(--progress, 0));
-            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: transform 0.16s linear;
             will-change: transform;
             z-index: 1;
         }
@@ -353,7 +353,7 @@
             background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
             transform-origin: left center;
             transform: scaleX(var(--progress, 0));
-            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: transform 0.16s linear;
             will-change: transform;
             z-index: 0;
         }
@@ -400,7 +400,7 @@
             font-weight: 600;
             color: white;
             text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: width 0.16s linear;
             will-change: width;
             transform: translateZ(0); /* GPU hint to smooth width animation */
             backface-visibility: hidden;
