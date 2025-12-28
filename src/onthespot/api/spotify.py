@@ -864,6 +864,68 @@ def spotify_get_album_track_ids(token, album_id, _retry=False):
     return item_ids
 
 
+def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
+    """
+    Get album tracks with full track objects for optimization.
+    Returns list of track objects that can be cached to avoid individual API calls.
+    """
+    logger.info(f"Getting tracks with metadata from album: {album_id}")
+    tracks = []
+    offset = 0
+    limit = 50
+
+    # First get album data for shared metadata
+    headers = {}
+    try:
+        headers, auth_source = _spotify_get_public_api_headers(token, "album metadata")
+    except (RuntimeError, OSError) as e:
+        if _retry:
+            logger.error(f"Failed to get token after retry for album {album_id}: {e}")
+            raise
+        logger.warning(f"Token retrieval failed for album metadata, attempting session reconnect: {e}")
+        parsing_index = config.get('active_account_number')
+        spotify_re_init_session(account_pool[parsing_index])
+        new_token = account_pool[parsing_index]['login']['session']
+        return spotify_get_album_tracks_with_metadata(new_token, album_id, _retry=True)
+    
+    # Get full album data (includes album-level metadata)
+    album_data = make_call(f'{BASE_URL}/albums/{album_id}', headers=headers)
+    if not album_data:
+        logger.error("Failed to get album data for %s", album_id)
+        return []
+
+    # Get all tracks from album
+    while True:
+        url = f'{BASE_URL}/albums/{album_id}/tracks?offset={offset}&limit={limit}'
+        resp = make_call(url, headers=headers, skip_cache=True)
+        if resp is None:
+            logger.error("Spotify album tracks request failed for %s", album_id)
+            break
+
+        offset += limit
+        
+        # Enrich track objects with album data
+        for track in resp['items']:
+            if track:
+                # Add album data to track object (Spotify's simplified track from /albums/.../tracks doesn't include album data)
+                track['album'] = {
+                    'id': album_id,
+                    'name': album_data.get('name', ''),
+                    'album_type': album_data.get('album_type', ''),
+                    'total_tracks': album_data.get('total_tracks', 0),
+                    'release_date': album_data.get('release_date', ''),
+                    'images': album_data.get('images', []),
+                    'artists': album_data.get('artists', [])
+                }
+                tracks.append(track)
+
+        if resp['total'] <= offset:
+            break
+    
+    logger.info(f"Album {album_id} has {len(tracks)} tracks with enriched metadata")
+    return tracks
+
+
 def spotify_get_search_results(token, search_term, content_types, _retry=False):
     logger.info(f"Get search result for term '{search_term}'")
 
@@ -1128,6 +1190,61 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
     except Exception as e:
         logger.error(f"Unexpected error fetching item {item_type}/{item_id}: {e}")
         return []
+
+
+def spotify_extract_metadata_from_cached_track(track_obj, playlist_number=None):
+    """
+    Extract metadata from a cached track object (from playlist/liked songs response).
+    This avoids making individual API calls for tracks we already have data for.
+    
+    Note: This provides basic metadata. Full metadata (with audio features, credits)
+    requires additional API calls via spotify_get_track_metadata.
+    """
+    from ..utils import conv_list_format
+    
+    info = {}
+    
+    # Basic track info (already in track object)
+    info['title'] = track_obj.get('name', '')
+    info['item_id'] = track_obj.get('id', '')
+    info['item_url'] = track_obj.get('external_urls', {}).get('spotify', '')
+    info['length'] = str(track_obj.get('duration_ms', ''))
+    info['explicit'] = track_obj.get('explicit', False)
+    info['isrc'] = track_obj.get('external_ids', {}).get('isrc', '')
+    info['is_playable'] = track_obj.get('is_playable', True)
+    
+    # Artists
+    artists = [artist.get('name') for artist in track_obj.get('artists', [])]
+    info['artists'] = conv_list_format(artists)
+    
+    # Album info (already in track object)
+    album = track_obj.get('album', {})
+    info['album_name'] = album.get('name', '')
+    info['album_type'] = album.get('album_type', '')
+    info['total_tracks'] = album.get('total_tracks', 0)
+    info['release_year'] = album.get('release_date', '').split('-')[0] if album.get('release_date') else ''
+    
+    # Album artists
+    album_artists = album.get('artists', [])
+    if album_artists:
+        info['album_artists'] = album_artists[0].get('name', '')
+    
+    # Image
+    images = album.get('images', [])
+    info['image_url'] = images[0].get('url', '') if images else ''
+    
+    # Track number - use playlist position if provided, otherwise use album track number
+    info['track_number'] = playlist_number if playlist_number else track_obj.get('track_number')
+    info['disc_number'] = track_obj.get('disc_number', 1)
+    
+    # These require additional API calls, so we set defaults
+    info['genre'] = ''
+    info['label'] = ''
+    info['copyright'] = ''
+    info['total_discs'] = 1
+    
+    logger.debug(f"Extracted cached metadata for track: {info['title']} by {info['artists']}")
+    return info
 
 
 def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):

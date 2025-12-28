@@ -193,21 +193,34 @@ class QueueWorker(threading.Thread):
                         for local_id, item in items_to_process:
                             try:
                                 logger.debug(f"QueueWorker processing item: {local_id} (service: {item['item_service']}, type: {item['item_type']})")
-                                token = get_account_token(item['item_service'])
                                 
-                                # For Spotify albums, use album lock to serialize track_number lookups
-                                album_lock_ctx = None
-                                if item['item_service'] == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
-                                    album_key = f"{item['item_service']}:{item.get('parent_id')}"
-                                    with album_download_locks_lock:
-                                        if album_key not in album_download_locks:
-                                            album_download_locks[album_key] = threading.Lock()
-                                        album_lock_ctx = album_download_locks[album_key]
+                                # Optimization: Use cached track data from playlist response if available
+                                cached_track_data = item.get('cached_track_data')
                                 
-                                if album_lock_ctx:
-                                    item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'], album_lock=album_lock_ctx)
+                                if cached_track_data and item['item_service'] == 'spotify':
+                                    # Fast path: Extract metadata from cached data (no API calls!)
+                                    from .api.spotify import spotify_extract_metadata_from_cached_track
+                                    playlist_number = int(item.get('playlist_number', 0)) if item.get('playlist_number') else None
+                                    item_metadata = spotify_extract_metadata_from_cached_track(cached_track_data, playlist_number)
+                                    logger.debug(f"Using cached track data for {local_id} - skipped API call!")
                                 else:
-                                    item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'])
+                                    # Slow path: Fetch metadata via API
+                                    token = get_account_token(item['item_service'])
+                                    
+                                    # For Spotify albums, use album lock to serialize track_number lookups
+                                    album_lock_ctx = None
+                                    if item['item_service'] == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                                        album_key = f"{item['item_service']}:{item.get('parent_id')}"
+                                        with album_download_locks_lock:
+                                            if album_key not in album_download_locks:
+                                                album_download_locks[album_key] = threading.Lock()
+                                            album_lock_ctx = album_download_locks[album_key]
+                                    
+                                    if album_lock_ctx:
+                                        item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'], album_lock=album_lock_ctx)
+                                    else:
+                                        item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'])
+                                
                                 if item_metadata:
                                     # Preserve playlist context from pending item
                                     playlist_total = item.get('playlist_total')

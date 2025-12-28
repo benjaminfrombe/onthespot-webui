@@ -199,9 +199,13 @@ def parsingworker():
                             
                             for index, item in enumerate(items):
                                 try:
-                                    item_id = item['track']['id']
-                                    item_type = item['track']['type']
+                                    track_obj = item['track']
+                                    item_id = track_obj['id']
+                                    item_type = track_obj['type']
                                     local_id = format_local_id(item_id)
+                                    
+                                    # Store full track object to avoid redundant API calls in QueueWorker
+                                    # This contains: name, artists, album, duration, explicit, isrc, etc.
                                     with pending_lock:
                                         pending[local_id] = {
                                             'local_id': local_id,
@@ -213,8 +217,10 @@ def parsingworker():
                                             'playlist_by': playlist_by,
                                             'playlist_number': str(index + 1),
                                             'playlist_total': total_items,
-                                            'playlist_image_url': playlist_image_url
-                                            }
+                                            'playlist_image_url': playlist_image_url,
+                                            # Cache the full track object from playlist response
+                                            'cached_track_data': track_obj
+                                        }
                                 except TypeError:
                                     logger.error(f'TypeError for {item}')
                             logger.info(f"Finished adding {total_items} items from playlist '{playlist_name}' to pending queue")
@@ -269,7 +275,8 @@ def parsingworker():
                             total_tracks = len(tracks)
                             logger.info(f"Liked Songs has {total_tracks} items, adding to pending queue...")
                             for index, track in enumerate(tracks):
-                                item_id = track['track']['id']
+                                track_obj = track['track']
+                                item_id = track_obj['id']
                                 local_id = format_local_id(item_id)
                                 with pending_lock:
                                     pending[local_id] = {
@@ -281,8 +288,10 @@ def parsingworker():
                                         'playlist_name': 'Liked Songs',
                                         'playlist_by': 'me',
                                         'playlist_number': str(index + 1),
-                                        'playlist_total': total_tracks
-                                        }
+                                        'playlist_total': total_tracks,
+                                        # Cache the full track object from liked songs response
+                                        'cached_track_data': track_obj
+                                    }
                             logger.info(f"Finished adding {total_tracks} items from Liked Songs to pending queue")
                         finally:
                             # Always clear batch parse flag
@@ -404,12 +413,20 @@ def parsingworker():
                     try:
                         playlist_name = ''
                         playlist_by = ''
-                        if current_type == "album":
+                        track_objects = []  # Store full track objects for optimization
+                        
+                        if current_type == "album" and current_service == "spotify":
+                            logger.info(f"Starting to parse album with metadata: {current_id}")
+                            from .api.spotify import spotify_get_album_tracks_with_metadata
+                            track_objects = spotify_get_album_tracks_with_metadata(token, current_id)
+                            track_ids = [t['id'] for t in track_objects] if track_objects else []
+                        elif current_type == "album":
                             logger.info(f"Starting to parse album: {current_id}")
                             track_ids = globals()[f"{current_service}_get_{current_type}_track_ids"](token, current_id)
                         else:
                             logger.info(f"Starting to parse {current_type}: {current_id}")
                             playlist_name, playlist_by, track_ids = globals()[f"{current_service}_get_{current_type}_data"](token, current_id)
+                        
                         if current_type == 'mix':
                             current_type = 'playlist'
                         if current_service == 'youtube' and not playlist_by:
@@ -417,21 +434,35 @@ def parsingworker():
 
                         total_items = len(track_ids)
                         logger.info(f"{current_type} has {total_items} items, adding to pending queue...")
+                        
                         for index, track_id in enumerate(track_ids):
                             local_id = format_local_id(track_id)
+                            
+                            # Find corresponding track object if we have it
+                            cached_track = None
+                            if track_objects:
+                                cached_track = next((t for t in track_objects if t['id'] == track_id), None)
+                            
+                            pending_item = {
+                                'local_id': local_id,
+                                'item_service': current_service,
+                                'item_type': 'track',
+                                'item_id': track_id,
+                                'parent_category': current_type,
+                                'parent_id': current_id if current_type == 'album' else '',
+                                'playlist_name': playlist_name,
+                                'playlist_by': playlist_by,
+                                'playlist_number': str(index + 1),
+                                'playlist_total': total_items
+                            }
+                            
+                            # Add cached track data if available (optimization!)
+                            if cached_track:
+                                pending_item['cached_track_data'] = cached_track
+                            
                             with pending_lock:
-                                pending[local_id] = {
-                                    'local_id': local_id,
-                                    'item_service': current_service,
-                                    'item_type': 'track',
-                                    'item_id': track_id,
-                                    'parent_category': current_type,
-                                    'parent_id': current_id if current_type == 'album' else '',  # Store album_id for locking
-                                    'playlist_name': playlist_name,
-                                    'playlist_by': playlist_by,
-                                    'playlist_number': str(index + 1),
-                                    'playlist_total': total_items
-                                    }
+                                pending[local_id] = pending_item
+                        
                         logger.info(f"Finished adding {total_items} items from {current_type} to pending queue")
                     finally:
                         # Always clear batch parse flag
