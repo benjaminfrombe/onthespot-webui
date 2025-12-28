@@ -126,12 +126,26 @@ app.config['PERMANENT_SESSION_LIFETIME'] = REMEMBER_DURATION
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# Initialize SocketIO for real-time updates (threading to avoid monkey-patching sockets)
+# Initialize SocketIO for real-time updates
+# Prefer websocket-only when gevent is available; fall back to polling on threading
+_async_mode = "threading"
+_transports = ["polling"]  # threading backend supports only polling
+try:
+    from gevent import monkey  # type: ignore
+
+    # Avoid patching ssl to prevent recursion issues with urllib3/requests
+    monkey.patch_all(ssl=False)
+    _async_mode = "gevent"
+    _transports = ["websocket"]  # websocket-only to avoid long-poll polling spam
+    logger.info("SocketIO using gevent async_mode (websocket-only transports)")
+except Exception as e:
+    logger.info(f"SocketIO gevent not available, using threading/polling: {e}")
+
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="threading",
-    transports=["websocket", "polling"],
+    async_mode=_async_mode,
+    transports=_transports,
 )
 
 
