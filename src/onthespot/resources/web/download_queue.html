@@ -377,9 +377,10 @@
             font-weight: 600;
             color: white;
             text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-            transition: width 0.3s ease-out;
+            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
             will-change: width;
             transform: translateZ(0); /* GPU hint to smooth width animation */
+            backface-visibility: hidden;
         }
 
         /* Action button cell */
