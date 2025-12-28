@@ -160,19 +160,12 @@ class DownloadWorker:
 
 
     def update_progress(self, item, status, progress_value):
-        """Update progress for web interface - only when changed to reduce websocket traffic"""
-        # Only update if progress changed by at least 1% or status changed
-        current_progress = item.get('progress', 0)
-        current_status = item.get('item_status')
-        
-        if (abs(progress_value - current_progress) >= 1 or 
-            status != current_status or 
-            progress_value == 0 or 
-            progress_value == 100):
-            item['progress'] = progress_value
-            item['item_status'] = status
-            # Track last update time for watchdog
-            item['last_update_time'] = time.time()
+        """Update progress for web interface"""
+        # Always update the item's progress for web interface
+        item['progress'] = progress_value
+        item['item_status'] = status
+        # Track last update time for watchdog
+        item['last_update_time'] = time.time()
 
 
     def yt_dlp_progress_hook(self, item, d):

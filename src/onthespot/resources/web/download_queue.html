@@ -43,14 +43,7 @@
 
         /* Progress bar */
         .progress-bar-fill {
-            transition: width 0.25s ease-out;
-            will-change: width;
-        }
-
-        /* Status badge transform-based progress */
-        .status-badge::before {
-            transition: transform 0.25s ease-out;
-            will-change: transform;
+            transition: width 0.1s linear;
         }
 
         /* Image preview popup */
@@ -114,7 +107,7 @@
             background: linear-gradient(to right, rgba(76, 175, 80, 0.15) 0%, rgba(34, 197, 94, 0.1) 100%);
             transform-origin: left center;
             transform: scaleX(var(--progress, 0));
-            transition: transform 0.25s ease-out;
+            transition: transform 0.1s linear;
             will-change: transform;
             z-index: 1;
         }
@@ -988,9 +981,6 @@
         function updateExistingRows(newData) {
             const tableBody = document.getElementById('download-queue-table');
             const rows = tableBody.querySelectorAll('tr');
-            
-            // Batch DOM reads and writes for better performance
-            const updates = [];
 
             rows.forEach(row => {
                 const firstCell = row.querySelector('td:first-child');
@@ -1004,54 +994,45 @@
                 const progressCell = row.querySelector('[data-cell="progress"]');
                 const actionCell = row.querySelector('[data-cell="action"]');
 
-                // Collect all necessary updates without touching DOM yet
-                const update = { statusCell, progressCell, actionCell, newItem };
-                updates.push(update);
-            });
-            
-            // Now batch all DOM writes together
-            requestAnimationFrame(() => {
-                updates.forEach(({ statusCell, progressCell, actionCell, newItem }) => {
-                    if (statusCell) {
-                        const statusBadge = statusCell.querySelector('.status-badge');
-                        const currentStatus = statusBadge?.textContent?.trim();
-                        const effectiveStatus = isReconnectingState(newItem.item_status) ? 'Reconnecting' : newItem.item_status;
-                        const newStatus = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
-                        const newProgress = newItem.progress || 0;
+                // Update status badge and progress
+                if (statusCell) {
+                    const statusBadge = statusCell.querySelector('.status-badge');
+                    const currentStatus = statusBadge?.textContent?.trim();
+                    const effectiveStatus = isReconnectingState(newItem.item_status) ? 'Reconnecting' : newItem.item_status;
+                    const newStatus = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
+                    const newProgress = newItem.progress || 0;
 
-                        if (currentStatus !== newStatus) {
-                            statusCell.innerHTML = createStatusBadge(newItem.item_status, newProgress);
-                            if (actionCell) {
-                                actionCell.innerHTML = createActionButtons(newItem);
-                            }
-                        } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                            // Smooth progress update using CSS transform
-                            const progressValue = (newProgress / 100).toFixed(4);
-                            if (statusBadge.style.getPropertyValue('--progress') !== progressValue) {
-                                statusBadge.style.setProperty('--progress', progressValue);
+                    if (currentStatus !== newStatus) {
+                        statusCell.innerHTML = createStatusBadge(newItem.item_status, newProgress);
+                        if (actionCell) {
+                            actionCell.innerHTML = createActionButtons(newItem);
+                        }
+                    } else if (newItem.item_status === 'Downloading' && statusBadge) {
+                        // Update progress for downloading items with transform-based fill.
+                        statusBadge.style.setProperty('--progress', (newProgress / 100).toFixed(4));
+                    }
+                }
+
+                // Update progress bar only if changed
+                if (progressCell) {
+                    const newProgress = newItem.progress || 0;
+                    const progressBar = progressCell.querySelector('.progress-bar-fill');
+                    if (progressBar) {
+                        const currentWidth = progressBar.style.width;
+                        const newWidth = `${newProgress}%`;
+                        if (currentWidth !== newWidth) {
+                            progressBar.style.width = newWidth;
+                            progressBar.textContent = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
+                        }
+                        // If width didn't change but restart state did, still update label.
+                        if (currentWidth === newWidth) {
+                            const desiredLabel = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
+                            if (progressBar.textContent !== desiredLabel) {
+                                progressBar.textContent = desiredLabel;
                             }
                         }
                     }
-
-                    // Update progress bar only if changed
-                    if (progressCell) {
-                        const newProgress = newItem.progress || 0;
-                        const progressBar = progressCell.querySelector('.progress-bar-fill');
-                        if (progressBar) {
-                            const currentWidth = progressBar.style.width;
-                            const newWidth = `${newProgress}%`;
-                            if (currentWidth !== newWidth) {
-                                progressBar.style.width = newWidth;
-                                progressBar.textContent = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                            } else if (currentWidth === newWidth) {
-                                const desiredLabel = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                                if (progressBar.textContent !== desiredLabel) {
-                                    progressBar.textContent = desiredLabel;
-                                }
-                            }
-                        }
-                    }
-                });
+                }
             });
         }
 
@@ -1448,29 +1429,6 @@
                 renderTable(true);
             });
             
-            // Handle incremental updates (optimized for performance)
-            socket.on('queue_incremental_update', function(data) {
-                const { changed, removed } = data;
-                
-                // Apply changes to currentData
-                if (changed) {
-                    Object.keys(changed).forEach(itemId => {
-                        currentData[itemId] = changed[itemId];
-                    });
-                }
-                
-                // Remove deleted items
-                if (removed && removed.length > 0) {
-                    removed.forEach(itemId => {
-                        delete currentData[itemId];
-                    });
-                }
-                
-                // Use smart update (only rebuild if necessary)
-                renderTable(false);
-            });
-            
-            // Handle full queue updates (periodic fallback)
             socket.on('queue_update', function(data) {
                 currentData = data;
                 renderTable(false);
