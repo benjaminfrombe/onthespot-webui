@@ -57,9 +57,23 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
 
     max_attempts = config.get('api_retry_max_attempts', 3)
     default_delay = config.get('api_retry_default_delay', 1)
+    request_timeout = 30  # 30 second timeout for API calls
 
     for attempt in range(max_attempts):
-        response = session.get(url, headers=headers, params=params)
+        try:
+            response = session.get(url, headers=headers, params=params, timeout=request_timeout)
+        except requests.exceptions.Timeout:
+            logger.error(f"Request timed out after {request_timeout}s for {url} (attempt {attempt + 1}/{max_attempts})")
+            if attempt < max_attempts - 1:
+                time.sleep(default_delay)
+                continue
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request exception for {url}: {e} (attempt {attempt + 1}/{max_attempts})")
+            if attempt < max_attempts - 1:
+                time.sleep(default_delay)
+                continue
+            return None
 
         if response.status_code == 200:
             if not skip_cache:

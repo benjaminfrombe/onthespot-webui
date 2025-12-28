@@ -200,8 +200,16 @@ def parsingworker():
                             for index, item in enumerate(items):
                                 try:
                                     track_obj = item['track']
-                                    item_id = track_obj['id']
-                                    item_type = track_obj['type']
+                                    if track_obj is None:
+                                        logger.warning(f"Skipping None track at position {index + 1} in playlist {playlist_name}")
+                                        continue
+                                    
+                                    item_id = track_obj.get('id')
+                                    if not item_id:
+                                        logger.warning(f"Skipping track with no ID at position {index + 1} in playlist {playlist_name}")
+                                        continue
+                                    
+                                    item_type = track_obj.get('type', 'track')
                                     local_id = format_local_id(item_id)
                                     
                                     # Store full track object to avoid redundant API calls in QueueWorker
@@ -221,8 +229,10 @@ def parsingworker():
                                             # Cache the full track object from playlist response
                                             'cached_track_data': track_obj
                                         }
-                                except TypeError:
-                                    logger.error(f'TypeError for {item}')
+                                except (TypeError, KeyError) as e:
+                                    logger.error(f'Error processing track at index {index} in playlist: {e}')
+                                    continue
+                            
                             logger.info(f"Finished adding {total_items} items from playlist '{playlist_name}' to pending queue")
                             
                             # Download playlist cover after adding all items
@@ -237,7 +247,7 @@ def parsingworker():
                                     # Calculate playlist directory from formatter
                                     playlist_path_template = config.get('playlist_path_formatter')
                                     # Extract just the directory part (everything before the last /)
-                                    dir_template = playlist_path_template.rsplit('/', 1)[0] if '/' in playlist_path_template else ''
+                                    dir_template = playlist_path_template.rsplit('/', 1)[0] if '/' in playlist_path_formatter else ''
                                     
                                     # Format with available variables
                                     playlist_dir = dir_template.format(
@@ -260,9 +270,13 @@ def parsingworker():
                                     logger.info(f"Saved playlist cover: {cover_path}")
                                 except Exception as e:
                                     logger.error(f"Failed to save playlist cover: {e}")
+                        except Exception as e:
+                            logger.error(f"Exception parsing playlist {current_id}: {e}\nTraceback: {traceback.format_exc()}")
+                            raise  # Re-raise to be caught by outer exception handler
                         finally:
                             # Always clear batch parse flag
                             runtimedata.set_batch_parse_flag(False)
+                            logger.info(f"Cleared batch_parse_in_progress flag for playlist {current_id}")
                         
                         continue
                     elif current_type == "liked_songs":
@@ -275,8 +289,16 @@ def parsingworker():
                             total_tracks = len(tracks)
                             logger.info(f"Liked Songs has {total_tracks} items, adding to pending queue...")
                             for index, track in enumerate(tracks):
-                                track_obj = track['track']
-                                item_id = track_obj['id']
+                                track_obj = track.get('track')
+                                if not track_obj:
+                                    logger.warning(f"Skipping None track at position {index + 1} in Liked Songs")
+                                    continue
+                                
+                                item_id = track_obj.get('id')
+                                if not item_id:
+                                    logger.warning(f"Skipping track with no ID at position {index + 1} in Liked Songs")
+                                    continue
+                                
                                 local_id = format_local_id(item_id)
                                 with pending_lock:
                                     pending[local_id] = {
@@ -293,9 +315,13 @@ def parsingworker():
                                         'cached_track_data': track_obj
                                     }
                             logger.info(f"Finished adding {total_tracks} items from Liked Songs to pending queue")
+                        except Exception as e:
+                            logger.error(f"Exception parsing liked_songs: {e}\nTraceback: {traceback.format_exc()}")
+                            raise
                         finally:
                             # Always clear batch parse flag
                             runtimedata.set_batch_parse_flag(False)
+                            logger.info("Cleared batch_parse_in_progress flag for liked_songs")
                         
                         continue
                     elif current_type == "your_episodes":
@@ -308,25 +334,37 @@ def parsingworker():
                             total_tracks = len(tracks)
                             logger.info(f"Your Episodes has {total_tracks} items, adding to pending queue...")
                             for index, track in enumerate(tracks):
-                                item_id = track['episode']['id']
-                                if item_id:
-                                    local_id = format_local_id(item_id)
-                                    with pending_lock:
-                                        pending[local_id] = {
-                                            'local_id': local_id,
-                                            'item_service': 'spotify',
-                                            'item_type': 'podcast_episode',
-                                            'item_id': item_id,
-                                            'parent_category': 'playlist',
-                                            'playlist_name': 'Your Episodes',
-                                            'playlist_by': 'me',
-                                            'playlist_number': str(index + 1),
-                                            'playlist_total': total_tracks
-                                            }
+                                episode_obj = track.get('episode')
+                                if not episode_obj:
+                                    logger.warning(f"Skipping None episode at position {index + 1} in Your Episodes")
+                                    continue
+                                
+                                item_id = episode_obj.get('id')
+                                if not item_id:
+                                    logger.warning(f"Skipping episode with no ID at position {index + 1} in Your Episodes")
+                                    continue
+                                    
+                                local_id = format_local_id(item_id)
+                                with pending_lock:
+                                    pending[local_id] = {
+                                        'local_id': local_id,
+                                        'item_service': 'spotify',
+                                        'item_type': 'podcast_episode',
+                                        'item_id': item_id,
+                                        'parent_category': 'playlist',
+                                        'playlist_name': 'Your Episodes',
+                                        'playlist_by': 'me',
+                                        'playlist_number': str(index + 1),
+                                        'playlist_total': total_tracks
+                                    }
                             logger.info(f"Finished adding {total_tracks} items from Your Episodes to pending queue")
+                        except Exception as e:
+                            logger.error(f"Exception parsing your_episodes: {e}\nTraceback: {traceback.format_exc()}")
+                            raise
                         finally:
                             # Always clear batch parse flag
                             runtimedata.set_batch_parse_flag(False)
+                            logger.info("Cleared batch_parse_in_progress flag for your_episodes")
                         
                         continue
 
@@ -350,9 +388,13 @@ def parsingworker():
                                     'parent_category': 'album'
                                     }
                         logger.info(f"Finished adding {total_items} items from artist to pending queue")
+                    except Exception as e:
+                        logger.error(f"Exception parsing artist {current_id}: {e}\nTraceback: {traceback.format_exc()}")
+                        raise
                     finally:
                         # Always clear batch parse flag
                         runtimedata.set_batch_parse_flag(False)
+                        logger.info(f"Cleared batch_parse_in_progress flag for artist {current_id}")
                     
                     continue
 
@@ -400,9 +442,13 @@ def parsingworker():
                                     'parent_category': current_type
                                     }
                         logger.info(f"Finished adding {total_items} items from {current_type} to pending queue")
+                    except Exception as e:
+                        logger.error(f"Exception parsing {current_type} {current_id}: {e}\nTraceback: {traceback.format_exc()}")
+                        raise
                     finally:
                         # Always clear batch parse flag
                         runtimedata.set_batch_parse_flag(False)
+                        logger.info(f"Cleared batch_parse_in_progress flag for {current_type} {current_id}")
                     
                     continue
 
@@ -464,9 +510,13 @@ def parsingworker():
                                 pending[local_id] = pending_item
                         
                         logger.info(f"Finished adding {total_items} items from {current_type} to pending queue")
+                    except Exception as e:
+                        logger.error(f"Exception parsing {current_type} {current_id}: {e}\nTraceback: {traceback.format_exc()}")
+                        raise
                     finally:
                         # Always clear batch parse flag
                         runtimedata.set_batch_parse_flag(False)
+                        logger.info(f"Cleared batch_parse_in_progress flag for {current_type} {current_id}")
                     
                     continue
 

@@ -730,12 +730,18 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
             return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
 
         resp = make_call(url, headers=headers, skip_cache=True)
+        
+        if resp is None:
+            logger.error(f"Failed to get playlist items for {playlist_id} at offset {offset}")
+            raise RuntimeError(f"Playlist API call failed for {playlist_id}")
 
         offset += limit
         items.extend(resp['items'])
 
         if resp['total'] <= offset:
             break
+    
+    logger.info(f"Retrieved {len(items)} items from playlist {playlist_id}")
     return items
 
 
