@@ -43,7 +43,7 @@
 
         /* Progress bar */
         .progress-bar-fill {
-            transition: width 0.3s ease-out;
+            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         /* Image preview popup */
@@ -89,9 +89,7 @@
 
         /* Status bar card */
         .status-bar {
-            background: linear-gradient(to right, rgba(76, 175, 80, 0.15) 0%, rgba(34, 197, 94, 0.1) 100%) no-repeat left center,
-                        linear-gradient(135deg, rgba(76, 175, 80, 0.12) 0%, rgba(34, 197, 94, 0.08) 50%, rgba(76, 175, 80, 0.05) 100%);
-            background-size: 0% 100%, 100% 100%;
+            background: linear-gradient(135deg, rgba(76, 175, 80, 0.12) 0%, rgba(34, 197, 94, 0.08) 50%, rgba(76, 175, 80, 0.05) 100%);
             border: 1px solid rgba(76, 175, 80, 0.3);
             border-radius: 16px;
             padding: 20px 24px;
@@ -100,7 +98,18 @@
                         inset 0 1px 0 rgba(255, 255, 255, 0.05);
             position: relative;
             overflow: hidden;
-            transition: background-size 0.3s ease-out;
+        }
+
+        .status-bar::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to right, rgba(76, 175, 80, 0.15) 0%, rgba(34, 197, 94, 0.1) 100%);
+            transform-origin: left center;
+            transform: scaleX(var(--progress, 0));
+            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: transform;
+            z-index: 1;
         }
         
         .status-bar::before {
@@ -112,7 +121,7 @@
             height: 100%;
             background: linear-gradient(90deg, transparent, rgba(76, 175, 80, 0.1), transparent);
             animation: shimmer 3s infinite;
-            z-index: 1;
+            z-index: 2;
         }
         
         @keyframes shimmer {
@@ -127,7 +136,7 @@
             flex-wrap: wrap;
             gap: 12px;
             position: relative;
-            z-index: 2;
+            z-index: 3;
         }
 
         .status-info {
@@ -327,12 +336,26 @@
             position: relative;
         }
 
+        .status-badge-label {
+            position: relative;
+            z-index: 1;
+        }
+
         .status-downloading {
-            background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%) no-repeat left center,
-                        rgba(59, 130, 246, 0.2);
-            background-size: 0% 100%, 100% 100%;
+            background: rgba(59, 130, 246, 0.2);
             color: #fff;
-            transition: background-size 0.3s ease-out;
+        }
+
+        .status-downloading::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
+            transform-origin: left center;
+            transform: scaleX(var(--progress, 0));
+            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: transform;
+            z-index: 0;
         }
 
         .status-waiting {
@@ -985,8 +1008,8 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        // Update progress for downloading items using background-size
-                        statusBadge.style.backgroundSize = `${newProgress}% 100%, 100% 100%`;
+                        // Update progress for downloading items with transform-based fill.
+                        statusBadge.style.setProperty('--progress', (newProgress / 100).toFixed(4));
                     }
                 }
 
@@ -1141,12 +1164,13 @@
             const className = statusClasses[effectiveStatus] || '';
             const displayText = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
             
-            // Add progress for downloading status using background-size
+            // Add progress for downloading status using transform-based fill.
             if (effectiveStatus === 'Downloading' || effectiveStatus === 'Reconnecting') {
-                return `<span class="status-badge ${className}" style="background-size: ${progress}% 100%, 100% 100%;">${displayText || 'N/A'}</span>`;
+                const progressValue = Math.max(0, Math.min(100, progress)) / 100;
+                return `<span class="status-badge ${className}" style="--progress: ${progressValue.toFixed(4)};"><span class="status-badge-label">${displayText || 'N/A'}</span></span>`;
             }
             
-            return `<span class="status-badge ${className}">${displayText || 'N/A'}</span>`;
+            return `<span class="status-badge ${className}"><span class="status-badge-label">${displayText || 'N/A'}</span></span>`;
         }
 
         function createTableRow(item) {
@@ -1368,10 +1392,10 @@
             
             document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${maxProgressAchieved.toFixed(1)}%`;
             
-            // Update global progress bar background based on actual download progress
+            // Update global progress bar fill based on actual download progress
             const statusBar = document.querySelector('.status-bar');
             if (statusBar) {
-                statusBar.style.backgroundSize = `${maxProgressAchieved}% 100%, 100% 100%`;
+                statusBar.style.setProperty('--progress', (maxProgressAchieved / 100).toFixed(4));
             }
         }
 
@@ -1380,6 +1404,23 @@
         let reconnectAttempts = 0;
         const MAX_RECONNECT_ATTEMPTS = 10;
         const socketTransports = {{ socketio_transports|tojson }};
+        let renderQueued = false;
+        let pendingForceRebuild = false;
+
+        function scheduleRender(forceRebuild = false) {
+            if (forceRebuild) {
+                pendingForceRebuild = true;
+            }
+            if (renderQueued) {
+                return;
+            }
+            renderQueued = true;
+            requestAnimationFrame(() => {
+                renderTable(pendingForceRebuild);
+                renderQueued = false;
+                pendingForceRebuild = false;
+            });
+        }
         
         function connectWebSocket() {
             console.log('Connecting to WebSocket...');
@@ -1402,12 +1443,12 @@
             socket.on('hard_restart', function(data) {
                 console.warn('Hard restart announced by server:', data);
                 hardRestartInProgress = true;
-                renderTable(true);
+                scheduleRender(true);
             });
             
             socket.on('queue_update', function(data) {
                 currentData = data;
-                renderTable(false);
+                scheduleRender(false);
             });
             
             socket.on('disconnect', function() {
@@ -1430,7 +1471,7 @@
                 .then(response => response.json())
                 .then(data => {
                     currentData = data;
-                    renderTable(true);
+                    scheduleRender(true);
                 })
                 .catch(err => console.error('Error fetching initial data:', err));
         }
@@ -1445,7 +1486,7 @@
                     .then(response => response.json())
                     .then(data => {
                         currentData = data;
-                        renderTable(forceRebuild);
+                        scheduleRender(forceRebuild);
                         setTimeout(() => fetchItems(false), fetchInterval);
                     })
                     .catch(err => console.error('Error fetching download queue:', err));
