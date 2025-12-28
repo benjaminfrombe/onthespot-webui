@@ -127,12 +127,24 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 
 # Initialize SocketIO for real-time updates
-# Use threading to avoid monkey-patching sockets; supports polling transport
+# Try gevent (websocket-only) without monkey-patching; fall back to threading/polling
+_async_mode = "threading"
+_transports = ["polling"]
+try:
+    import gevent  # noqa: F401
+    import geventwebsocket  # noqa: F401
+
+    _async_mode = "gevent"
+    _transports = ["websocket"]
+    logger.info("SocketIO using gevent async_mode (websocket-only, no monkey patch)")
+except Exception as e:
+    logger.info(f"SocketIO gevent not available, using threading/polling: {e}")
+
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode="threading",
-    transports=["polling"],
+    async_mode=_async_mode,
+    transports=_transports,
 )
 
 
