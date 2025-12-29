@@ -1449,6 +1449,28 @@
             });
             
             socket.on('queue_update', function(data) {
+                if (data && data.full === true && data.data) {
+                    currentData = data.data;
+                    renderTable(true);
+                    return;
+                }
+
+                if (data && (data.updated || data.removed)) {
+                    const updated = data.updated || {};
+                    const removed = data.removed || [];
+
+                    Object.keys(updated).forEach(id => {
+                        currentData[id] = updated[id];
+                    });
+
+                    removed.forEach(id => {
+                        delete currentData[id];
+                    });
+
+                    renderTable(false);
+                    return;
+                }
+
                 currentData = data;
                 renderTable(false);
             });

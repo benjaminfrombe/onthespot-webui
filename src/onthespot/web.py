@@ -513,6 +513,9 @@ class WebSocketBroadcaster(threading.Thread):
         self.last_emit_time = 0.0
         self.last_queue_size = 0
         self.last_update_time = 0.0
+        self.last_item_update_times = {}
+        self.full_sync_interval = 30.0
+        self.last_full_sync = 0.0
 
     @staticmethod
     def _latest_update_time(queue_data):
@@ -540,8 +543,34 @@ class WebSocketBroadcaster(threading.Thread):
                 )
 
                 if should_emit and (now - self.last_emit_time) >= self.min_emit_interval:
-                    # Emit only when something changed and at a reasonable rate.
-                    socketio.emit('queue_update', queue_data, namespace='/')
+                    removed_ids = [item_id for item_id in self.last_item_update_times.keys()
+                                   if item_id not in queue_data]
+                    updated_items = {}
+                    for item_id, item in queue_data.items():
+                        item_update = item.get('last_update_time', 0.0)
+                        last_update = self.last_item_update_times.get(item_id, 0.0)
+                        if item_update > last_update or item_id not in self.last_item_update_times:
+                            updated_items[item_id] = item
+
+                    send_full = (now - self.last_full_sync) >= self.full_sync_interval
+                    if send_full or (not self.last_item_update_times and queue_size > 0):
+                        socketio.emit('queue_update', {"full": True, "data": queue_data}, namespace='/')
+                        self.last_item_update_times = {
+                            item_id: item.get('last_update_time', 0.0)
+                            for item_id, item in queue_data.items()
+                        }
+                        self.last_full_sync = now
+                    elif updated_items or removed_ids:
+                        socketio.emit(
+                            'queue_update',
+                            {"full": False, "updated": updated_items, "removed": removed_ids},
+                            namespace='/'
+                        )
+                        for item_id in removed_ids:
+                            self.last_item_update_times.pop(item_id, None)
+                        for item_id, item in updated_items.items():
+                            self.last_item_update_times[item_id] = item.get('last_update_time', 0.0)
+
                     self.last_emit_time = now
                     self.last_queue_size = queue_size
                     self.last_update_time = latest_update
