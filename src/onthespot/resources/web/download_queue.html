@@ -41,10 +41,9 @@
             opacity: 1;
         }
 
-        /* Progress bar - JS interpolation keeps motion smooth */
+        /* Progress bar - CSS transition handles smoothing */
         .progress-bar-fill {
-            transition: none;
-            will-change: width;  /* GPU acceleration */
+            transition: width 0.3s ease-out;
         }
 
         /* Image preview popup */
@@ -341,8 +340,7 @@
                         rgba(59, 130, 246, 0.2);
             background-size: 0% 100%, 100% 100%;
             color: #fff;
-            transition: background-size 0.1s ease-out;
-            will-change: background-size;  /* GPU acceleration */
+            transition: background-size 0.3s ease-out;
         }
 
         .status-waiting {
@@ -813,9 +811,6 @@
         let fetchInterval = 500;
         let filtersVisible = false;
         let lastRenderedIds = [];
-        const PROGRESS_INTERPOLATION_MS = 700;
-        const progressSmoothers = new Map();
-        const STALE_RATE_MS = 1200;  // If no update for 1.2s, fall back to interpolation
 
         // ============= UI FUNCTIONS =============
         function toggleFilters() {
@@ -1132,23 +1127,29 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        // Smoothly animate progress using CSS transition (already defined as 0.1s ease-out)
-                        const targetProgress = newProgress || 0;
-                        
-                        // Use requestAnimationFrame to batch DOM updates for smooth rendering
-                        requestAnimationFrame(() => {
-                            statusBadge.style.backgroundSize = `${targetProgress}% 100%, 100% 100%`;
-                        });
+                        // Simple direct update - CSS transition handles smoothing (0.1s ease-out)
+                        statusBadge.style.backgroundSize = `${newProgress}% 100%, 100% 100%`;
                     }
                 }
 
-                // Update progress bar only if changed
+                // Update progress bar - SIMPLE direct update, CSS transition handles smoothing
                 if (progressCell) {
                     const newProgress = newItem.progress || 0;
                     const progressBar = progressCell.querySelector('.progress-bar-fill');
                     if (progressBar) {
-                        const reconnecting = isReconnectingState(newItem.item_status);
-                        animateProgressBar(progressBar, newProgress, reconnecting);
+                        const currentWidth = progressBar.style.width;
+                        const newWidth = `${newProgress}%`;
+                        if (currentWidth !== newWidth) {
+                            progressBar.style.width = newWidth;
+                            progressBar.textContent = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
+                        }
+                        // If width didn't change but restart state did, still update label
+                        if (currentWidth === newWidth) {
+                            const desiredLabel = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
+                            if (progressBar.textContent !== desiredLabel) {
+                                progressBar.textContent = desiredLabel;
+                            }
+                        }
                     }
                 }
             });
