@@ -511,12 +511,16 @@ class WebSocketBroadcaster(threading.Thread):
         self.daemon = True
         self.min_emit_interval = 0.2  # Throttle emits to reduce network churn
         self.progress_threshold = 1.0  # Only send progress updates when >= 1%
+        self.progress_emit_interval = 0.05  # 20Hz lightweight progress updates
+        self.progress_delta_threshold = 0.5
         self.last_emit_time = 0.0
         self.last_queue_size = 0
         self.last_update_time = 0.0
         self.last_item_update_times = {}
         self.last_item_progress = {}
         self.last_item_status = {}
+        self.last_progress_emit_time = 0.0
+        self.last_progress_snapshot = {}
         self.full_sync_interval = 30.0
         self.last_full_sync = 0.0
 
@@ -609,6 +613,30 @@ class WebSocketBroadcaster(threading.Thread):
                     self.last_emit_time = now
                     self.last_queue_size = queue_size
                     self.last_update_time = latest_update
+
+                # Lightweight progress updates for active downloads only.
+                if (now - self.last_progress_emit_time) >= self.progress_emit_interval:
+                    progress_updates = {}
+                    active_ids = set()
+                    for item_id, item in queue_data.items():
+                        if item.get('item_status') != "Downloading":
+                            continue
+                        active_ids.add(item_id)
+                        progress = float(item.get('progress', 0.0))
+                        last_progress = self.last_progress_snapshot.get(item_id)
+                        if last_progress is None or abs(progress - last_progress) >= self.progress_delta_threshold:
+                            progress_updates[item_id] = progress
+
+                    # Cleanup snapshot for items no longer downloading.
+                    for item_id in list(self.last_progress_snapshot.keys()):
+                        if item_id not in active_ids:
+                            self.last_progress_snapshot.pop(item_id, None)
+
+                    if progress_updates:
+                        socketio.emit('progress_update', {"updates": progress_updates}, namespace='/')
+                        for item_id, progress in progress_updates.items():
+                            self.last_progress_snapshot[item_id] = progress
+                        self.last_progress_emit_time = now
                 
             except Exception as e:
                 logger.error(f"Error in WebSocketBroadcaster: {str(e)}")

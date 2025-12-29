@@ -1022,6 +1022,27 @@
             progressAnimations.set(progressBar, requestAnimationFrame(step));
         }
 
+        function applyProgressUpdate(localId, progressValue) {
+            const item = currentData[localId];
+            if (item) {
+                item.progress = progressValue;
+            }
+
+            const row = document.querySelector(`tr[data-item-id="${localId}"]`);
+            if (!row) return;
+
+            const statusBadge = row.querySelector('[data-cell="status"] .status-badge');
+            if (statusBadge && (!item || item.item_status === 'Downloading')) {
+                statusBadge.style.backgroundSize = `${progressValue}% 100%, 100% 100%`;
+            }
+
+            const progressBar = row.querySelector('[data-cell="progress"] .progress-bar-fill');
+            if (progressBar) {
+                const reconnecting = item ? isReconnectingState(item.item_status) : false;
+                animateProgressBar(progressBar, progressValue, reconnecting);
+            }
+        }
+
         function updateExistingRows(newData) {
             const tableBody = document.getElementById('download-queue-table');
             const rows = tableBody.querySelectorAll('tr');
@@ -1519,6 +1540,13 @@
 
                 currentData = data;
                 renderTable(false);
+            });
+
+            socket.on('progress_update', function(data) {
+                if (!data || !data.updates) return;
+                Object.entries(data.updates).forEach(([localId, progress]) => {
+                    applyProgressUpdate(localId, Number(progress));
+                });
             });
             
             socket.on('disconnect', function() {
