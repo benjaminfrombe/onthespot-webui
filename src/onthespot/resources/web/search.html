@@ -1162,13 +1162,18 @@
         }
 
         function handleDownload(url) {
+            console.log('handleDownload called with URL:', url);
             showToast('Starting download...', 'success');
 
             fetch(`/api/parse_url/${encodeURIComponent(url)}`, {
                 method: 'POST',
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('Response received:', response.status);
+                return response.json();
+            })
             .then(data => {
+                console.log('Response data:', data);
                 if (data.success) {
                     showToast('Download started!', 'success');
 
@@ -1184,7 +1189,7 @@
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
+                console.error('Error in handleDownload:', error);
                 showToast('Error starting download', 'error');
             });
         }

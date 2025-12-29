@@ -1012,7 +1012,11 @@ def debug_queue_status():
 @app.route('/api/parse_url/<path:url>', methods=['POST'])
 @login_required
 def parse_download(url):
+    logger.info(f"=== API ENDPOINT /api/parse_url called with URL: {url} ===")
+    if config.get('debug_playlist_flow', False):
+        logger.info(f"[DEBUG FLOW] API /api/parse_url called, about to call parse_url()")
     parse_url(url)
+    logger.info(f"=== parse_url() completed for: {url} ===")
     return jsonify(success=True)
 
 @app.route('/api/notifications', methods=['GET'])
