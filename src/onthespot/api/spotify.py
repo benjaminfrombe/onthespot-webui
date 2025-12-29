@@ -707,13 +707,22 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath, _retry=Fal
 
 def spotify_get_playlist_items(token, playlist_id, _retry=False):
     logger.info(f"Getting items in playlist: '{playlist_id}'")
+    if config.get('debug_playlist_flow', False):
+        logger.info(f"[DEBUG FLOW] spotify_get_playlist_items: starting, token type: {type(token)}")
+    
     items = []
     offset = 0
     limit = 100
 
     while True:
         url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}'
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] spotify_get_playlist_items: URL = {url}, offset={offset}")
+        
         headers = {}
+        
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] spotify_get_playlist_items: about to call token.tokens().get()")
         
         # Get token with timeout protection (token.tokens() can hang on dead sessions)
         token_error = None
@@ -722,13 +731,23 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
         def get_token_with_timeout():
             nonlocal token_result, token_error
             try:
+                if config.get('debug_playlist_flow', False):
+                    logger.info(f"[DEBUG FLOW] Inside get_token_with_timeout thread, calling token.tokens()")
                 token_result = token.tokens().get('user-read-email')
+                if config.get('debug_playlist_flow', False):
+                    logger.info(f"[DEBUG FLOW] token.tokens().get() returned successfully")
             except Exception as e:
+                if config.get('debug_playlist_flow', False):
+                    logger.info(f"[DEBUG FLOW] token.tokens().get() raised exception: {e}")
                 token_error = e
         
         import threading
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] Creating thread for token retrieval")
         token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
         token_thread.start()
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] Thread started, waiting for it with 10s timeout")
         token_thread.join(timeout=10)  # 10 second timeout for token retrieval
         
         if token_thread.is_alive():
@@ -741,6 +760,9 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
             new_token = account_pool[parsing_index]['login']['session']
             return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
         
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] Thread completed, checking results")
+        
         if token_error:
             if _retry:
                 logger.error(f"Failed to get token after retry for playlist items {playlist_id}: {token_error}")
@@ -752,6 +774,9 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
             return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
         
         headers['Authorization'] = f"Bearer {token_result}"
+        
+        if config.get('debug_playlist_flow', False):
+            logger.info(f"[DEBUG FLOW] Got authorization header, calling make_call()")
 
         resp = make_call(url, headers=headers, skip_cache=True)
         
