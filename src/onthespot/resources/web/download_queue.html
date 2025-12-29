@@ -977,6 +977,35 @@
 
                 if (!newItem) return;
 
+                // Update item name (for playlist metadata updates)
+                const nameCell = row.querySelector('[data-cell="name"]');
+                if (nameCell && newItem.item_name) {
+                    const currentName = nameCell.textContent.trim();
+                    // Check if name changed (e.g., "Track 1" → "Song Name")
+                    if (currentName !== newItem.item_name && !newItem.item_name.startsWith('Track ')) {
+                        console.log(`Live update: "${currentName}" → "${newItem.item_name}"`);
+                        nameCell.textContent = newItem.item_name.length > 30 ? newItem.item_name.substring(0, 30) + '...' : newItem.item_name;
+                        nameCell.title = newItem.item_name;
+                    }
+                }
+
+                // Update item artist (for playlist metadata updates)
+                const byCell = row.querySelector('[data-cell="by"]');
+                if (byCell && newItem.item_by !== undefined) {
+                    const currentBy = byCell.textContent.trim();
+                    if (currentBy !== newItem.item_by && currentBy !== 'N/A' && newItem.item_by !== '') {
+                        console.log(`Live update artist: "${currentBy}" → "${newItem.item_by}"`);
+                        byCell.textContent = newItem.item_by.length > 15 ? newItem.item_by.substring(0, 15) + '...' : newItem.item_by;
+                        byCell.title = newItem.item_by;
+                    }
+                }
+
+                // Update thumbnail (for playlist metadata updates)
+                const thumbnailCell = row.querySelector('[data-cell="thumbnail"] img');
+                if (thumbnailCell && newItem.item_thumbnail && thumbnailCell.src !== newItem.item_thumbnail) {
+                    thumbnailCell.src = newItem.item_thumbnail;
+                }
+
                 const statusCell = row.querySelector('[data-cell="status"]');
                 const progressCell = row.querySelector('[data-cell="progress"]');
                 const actionCell = row.querySelector('[data-cell="action"]');
@@ -1161,6 +1190,7 @@
 
         function createTableRow(item) {
             const row = document.createElement('tr');
+            row.dataset.itemId = item.local_id;  // Enable easier row lookup for updates
 
             // Hidden local_id cell
             const idCell = document.createElement('td');
@@ -1171,6 +1201,7 @@
             // Thumbnail (desktop - always show)
             const desktopImgCell = document.createElement('td');
             desktopImgCell.className = 'thumbnail-col hide-on-mobile';
+            desktopImgCell.dataset.cell = 'thumbnail';  // Enable live updates
             if (item.item_thumbnail) {
                 const img = document.createElement('img');
                 img.src = item.item_thumbnail;
@@ -1234,6 +1265,7 @@
             // Item name
             const nameCell = document.createElement('td');
             nameCell.className = 'col-name name-cell';
+            nameCell.dataset.cell = 'name';  // Enable live updates
             nameCell.textContent = item.item_name.length > 30 ? item.item_name.substring(0, 30) + '...' : item.item_name;
             nameCell.title = item.item_name;
             row.appendChild(nameCell);
@@ -1249,6 +1281,7 @@
             // By (artist name)
             const byCell = document.createElement('td');
             byCell.className = 'col-by hide-on-tablet hide-on-mobile';
+            byCell.dataset.cell = 'by';  // Enable live updates
             const artistName = item.item_by || '';
             byCell.textContent = artistName ? (artistName.length > 15 ? artistName.substring(0, 15) + '...' : artistName) : 'N/A';
             byCell.title = artistName;
