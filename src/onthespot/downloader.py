@@ -171,9 +171,9 @@ class DownloadWorker:
         current_progress = item.get('progress', 0)
         current_status = item.get('item_status', '')
         
-        # Skip update if progress changed by less than 1% and status unchanged
+        # Skip update if progress changed by less than 0.5% and status unchanged
         if (status == current_status and 
-            abs(progress_value - current_progress) < 1 and 
+            abs(progress_value - current_progress) < 0.5 and 
             progress_value != 0 and progress_value != 100):
             return
         
@@ -774,7 +774,7 @@ class DownloadWorker:
                                         if len(data) != 0:
                                             downloaded += len(data)
                                             file.write(data)
-                                            progress_pct = int((downloaded / total_size) * 100)
+                                            progress_pct = round((downloaded / total_size) * 100, 1)
                                             self.update_progress(item, "Downloading", progress_pct)
                                             last_progress_time = time.time()
                                             consecutive_empty_reads = 0  # Reset on successful read
@@ -997,7 +997,7 @@ class DownloadWorker:
                                         if downloaded != total_size:
                                             if item['item_status'] == 'Cancelled':
                                                 raise Exception("Download cancelled by user.")
-                                            progress_pct = int((downloaded / total_size) * 100)
+                                            progress_pct = round((downloaded / total_size) * 100, 1)
                                             self.update_progress(item, "Downloading", progress_pct)
                                             last_progress_time = time.time()  # Update progress time when data received
 
@@ -1123,7 +1123,7 @@ class DownloadWorker:
                                             if total_size > 0 and downloaded != total_size:
                                                 if item['item_status'] == 'Cancelled':
                                                     raise Exception("Download cancelled by user.")
-                                                progress_pct = int((downloaded / total_size) * 100)
+                                                progress_pct = round((downloaded / total_size) * 100, 1)
                                                 self.update_progress(item, "Downloading", progress_pct)
                                                 last_progress_time = time.time()  # Update progress time when data received
 

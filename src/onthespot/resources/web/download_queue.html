@@ -814,7 +814,9 @@
         let filtersVisible = false;
         let lastRenderedIds = [];
         const PROGRESS_INTERPOLATION_MS = 700;
-        const progressAnimations = new Map();
+        const progressSmoothers = new Map();
+        const MAX_PROGRESS_RATE = 40; // % per second
+        const STALE_RATE_MS = 1200;
 
         // ============= UI FUNCTIONS =============
         function toggleFilters() {
@@ -976,50 +978,77 @@
                 progressBar.style.width = `${safeTarget}%`;
                 progressBar.textContent = label;
                 progressBar.dataset.progress = String(safeTarget);
-                const existing = progressAnimations.get(progressBar);
-                if (existing) {
-                    cancelAnimationFrame(existing);
-                    progressAnimations.delete(progressBar);
+                const existing = progressSmoothers.get(progressBar);
+                if (existing?.raf) {
+                    cancelAnimationFrame(existing.raf);
+                    existing.raf = null;
                 }
                 return;
             }
 
-            const currentValue = parseFloat(progressBar.dataset.progress || progressBar.style.width) || 0;
-            if (Math.abs(safeTarget - currentValue) < 0.01) {
-                progressBar.style.width = `${safeTarget}%`;
-                progressBar.textContent = `${safeTarget.toFixed(1)}%`;
-                progressBar.dataset.progress = String(safeTarget);
-                return;
+            const now = performance.now();
+            let state = progressSmoothers.get(progressBar);
+            const currentValue = state?.display ?? (parseFloat(progressBar.dataset.progress || progressBar.style.width) || 0);
+
+            if (!state) {
+                state = {
+                    display: currentValue,
+                    target: safeTarget,
+                    rate: 0,
+                    lastUpdate: now,
+                    lastFrame: now,
+                    raf: null
+                };
+                progressSmoothers.set(progressBar, state);
             }
 
-            const existing = progressAnimations.get(progressBar);
-            if (existing) {
-                cancelAnimationFrame(existing);
-                progressAnimations.delete(progressBar);
+            const deltaT = (now - state.lastUpdate) / 1000;
+            if (deltaT > 0) {
+                const delta = safeTarget - state.display;
+                const rate = delta / deltaT;
+                if (rate > 0) {
+                    state.rate = Math.min(rate, MAX_PROGRESS_RATE);
+                }
             }
 
-            const start = performance.now();
-            const from = currentValue;
-            const to = safeTarget;
+            state.target = safeTarget;
+            state.lastUpdate = now;
 
-            const step = (now) => {
-                const elapsed = now - start;
-                const t = Math.min(elapsed / PROGRESS_INTERPOLATION_MS, 1);
-                const eased = 1 - Math.pow(1 - t, 3);
-                const value = from + (to - from) * eased;
+            const step = (ts) => {
+                const dt = Math.max((ts - state.lastFrame) / 1000, 0);
+                state.lastFrame = ts;
+                const stale = (ts - state.lastUpdate) > STALE_RATE_MS;
 
-                progressBar.style.width = `${value}%`;
-                progressBar.textContent = `${value.toFixed(1)}%`;
-                progressBar.dataset.progress = String(value);
-
-                if (t < 1) {
-                    progressAnimations.set(progressBar, requestAnimationFrame(step));
+                let next;
+                if (!stale && state.rate > 0) {
+                    next = state.display + state.rate * dt;
                 } else {
-                    progressAnimations.delete(progressBar);
+                    next = state.display + (state.target - state.display) * 0.2;
+                }
+
+                if (next > state.target) {
+                    next = state.target;
+                }
+
+                state.display = next;
+                progressBar.style.width = `${next}%`;
+                progressBar.textContent = `${next.toFixed(1)}%`;
+                progressBar.dataset.progress = String(next);
+
+                if (state.display + 0.05 < state.target) {
+                    state.raf = requestAnimationFrame(step);
+                } else {
+                    state.display = state.target;
+                    progressBar.style.width = `${state.target}%`;
+                    progressBar.textContent = `${state.target.toFixed(1)}%`;
+                    progressBar.dataset.progress = String(state.target);
+                    state.raf = null;
                 }
             };
 
-            progressAnimations.set(progressBar, requestAnimationFrame(step));
+            if (!state.raf) {
+                state.raf = requestAnimationFrame(step);
+            }
         }
 
         function applyProgressUpdate(localId, progressValue) {
@@ -1366,7 +1395,7 @@
             const statusCell = document.createElement('td');
             statusCell.className = 'col-status';
             statusCell.dataset.cell = 'status';
-            const progress = item.progress || 0;
+            const progress = Number(item.progress || 0);
             statusCell.innerHTML = createStatusBadge(item.item_status, progress);
             row.appendChild(statusCell);
 
@@ -1378,7 +1407,7 @@
             progressCell.innerHTML = `
                 <div class="progress-container">
                     <div class="progress-bar-fill" style="width: ${progress}%;">
-                        ${isReconnectingState(item.item_status) ? 'Reconnecting…' : `${progress}%`}
+                        ${isReconnectingState(item.item_status) ? 'Reconnecting…' : `${progress.toFixed(1)}%`}
                     </div>
                 </div>
             `;

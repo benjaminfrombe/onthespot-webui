@@ -512,7 +512,7 @@ class WebSocketBroadcaster(threading.Thread):
         self.min_emit_interval = 0.2  # Throttle emits to reduce network churn
         self.progress_threshold = 1.0  # Only send progress updates when >= 1%
         self.progress_emit_interval = 0.05  # 20Hz lightweight progress updates
-        self.progress_delta_threshold = 0.5
+        self.progress_delta_threshold = 0.2
         self.last_emit_time = 0.0
         self.last_queue_size = 0
         self.last_update_time = 0.0
