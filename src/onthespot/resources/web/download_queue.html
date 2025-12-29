@@ -41,9 +41,11 @@
             opacity: 1;
         }
 
-        /* Progress bar - CSS transition handles smoothing */
+        /* Progress bar - optimized for 10 Hz websocket updates */
         .progress-bar-fill {
-            transition: width 0.3s ease-out;
+            transition: width 0.15s linear;
+            transform: translateZ(0);  /* Force GPU acceleration */
+            will-change: width;
         }
 
         /* Image preview popup */
@@ -340,7 +342,9 @@
                         rgba(59, 130, 246, 0.2);
             background-size: 0% 100%, 100% 100%;
             color: #fff;
-            transition: background-size 0.3s ease-out;
+            transition: background-size 0.15s linear;
+            transform: translateZ(0);  /* Force GPU acceleration */
+            will-change: background-size;
         }
 
         .status-waiting {
