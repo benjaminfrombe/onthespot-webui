@@ -157,6 +157,11 @@ class QueueWorker(threading.Thread):
         logger.info("QueueWorker started")
         while self.is_running:
             try:
+                # Debug logging helper
+                def _debug_log(message):
+                    if config.get('debug_playlist_flow', False):
+                        logger.info(f"[DEBUG QW] {message}")
+                
                 # Wait if batch parse is in progress to allow complete queue population
                 with runtimedata.batch_parse_lock:
                     is_parsing = runtimedata.batch_parse_in_progress
@@ -165,8 +170,11 @@ class QueueWorker(threading.Thread):
                     with pending_lock:
                         pending_count = len(pending)
                     logger.info(f"QueueWorker waiting: batch parse in progress, {pending_count} items in pending queue")
+                    _debug_log(f"Waiting for batch parse to complete, {pending_count} items pending")
                     time.sleep(0.5)
                     continue
+                
+                _debug_log(f"Checking pending queue, current size: {len(pending)}")
                 
                 if pending:
                     # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
@@ -190,6 +198,32 @@ class QueueWorker(threading.Thread):
                         
                         logger.info(f"QueueWorker processing {len(items_to_process)} items from pending queue ({remaining} remaining)")
                         
+                if pending:
+                    # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
+                    runtimedata.set_batch_queue_processing_flag(True)
+                    _debug_log("Set batch_queue_processing = True")
+                    
+                    try:
+                        # Process pending items in batches to avoid long blocking for huge playlists
+                        BATCH_SIZE = 50  # Process 50 items at a time
+                        with pending_lock:
+                            # Get first BATCH_SIZE items
+                            all_items = list(pending.items())
+                            # Sort by playlist number to maintain order
+                            all_items.sort(key=lambda x: int(x[1].get('playlist_number', 0) or 0))
+                            
+                            items_to_process = all_items[:BATCH_SIZE]
+                            # Remove processed items from pending
+                            for local_id, _ in items_to_process:
+                                del pending[local_id]
+                            
+                            remaining = len(pending)
+                        
+                        logger.info(f"QueueWorker processing {len(items_to_process)} items from pending queue ({remaining} remaining)")
+                        _debug_log(f"Processing batch of {len(items_to_process)} items, {remaining} remaining after")
+                        
+                        processed_successfully = 0
+                        
                         for local_id, item in items_to_process:
                             try:
                                 logger.debug(f"QueueWorker processing item: {local_id} (service: {item['item_service']}, type: {item['item_type']})")
@@ -199,12 +233,15 @@ class QueueWorker(threading.Thread):
                                 
                                 if cached_track_data and item['item_service'] == 'spotify':
                                     # Fast path: Extract metadata from cached data (no API calls!)
+                                    _debug_log(f"Using cached track data for {local_id}")
                                     from .api.spotify import spotify_extract_metadata_from_cached_track
                                     playlist_number = int(item.get('playlist_number', 0)) if item.get('playlist_number') else None
                                     item_metadata = spotify_extract_metadata_from_cached_track(cached_track_data, playlist_number)
+                                    _debug_log(f"Extracted metadata from cache: {item_metadata.get('title', 'Unknown')}")
                                     logger.debug(f"Using cached track data for {local_id} - skipped API call!")
                                 else:
                                     # Slow path: Fetch metadata via API
+                                    _debug_log(f"No cached data for {local_id}, fetching via API")
                                     token = get_account_token(item['item_service'])
                                     
                                     # For Spotify albums, use album lock to serialize track_number lookups
@@ -225,6 +262,7 @@ class QueueWorker(threading.Thread):
                                     # Preserve playlist context from pending item
                                     playlist_total = item.get('playlist_total')
                                     logger.debug(f"QueueWorker: Processing {local_id}, pending item keys: {list(item.keys())}, playlist_total={playlist_total}, playlist_number={item.get('playlist_number')}")
+                                    _debug_log(f"Got metadata for {local_id}: {item_metadata.get('title', 'Unknown')}, adding to download_queue")
                                     
                                     with download_queue_lock:
                                         download_queue[local_id] = {
@@ -250,12 +288,18 @@ class QueueWorker(threading.Thread):
                                             'progress': 0,
                                             'last_update_time': time.time()
                                         }
+                                        processed_successfully += 1
+                                        _debug_log(f"Added {local_id} to download_queue, total queue size: {len(download_queue)}")
+                                else:
+                                    _debug_log(f"WARNING: No metadata returned for {local_id}")
                             except Exception as e:
                                 logger.error(f"Error processing {local_id}: {str(e)}\nTraceback: {traceback.format_exc()}")
+                                _debug_log(f"Exception processing {local_id}: {e}")
                                 with pending_lock:
                                     pending[local_id] = item
                         
                         logger.info(f"QueueWorker finished processing batch, {len(download_queue)} items now in download queue")
+                        _debug_log(f"Batch complete: {processed_successfully} successfully added, download_queue size: {len(download_queue)}")
                         
                         # Only clear flag when ALL pending items are processed
                         if remaining == 0:
@@ -945,6 +989,47 @@ def download_media(local_id):
         return send_file(download_queue[local_id]['file_path'], as_attachment=True)
     else:
         return send_file(os.path.join(cache_dir(), "logs", config.session_uuid, "onthespot.log"), as_attachment=True)
+
+@app.route('/api/debug/queue_status')
+@login_required
+def debug_queue_status():
+    """Debug endpoint to check queue states"""
+    with parsing_lock:
+        parsing_items = list(parsing.keys())
+    with pending_lock:
+        pending_items = list(pending.keys())
+    with download_queue_lock:
+        download_items = list(download_queue.keys())
+    
+    with runtimedata.batch_parse_lock:
+        batch_parse_active = runtimedata.batch_parse_in_progress
+        batch_parse_time = runtimedata.batch_parse_start_time
+    
+    with runtimedata.batch_queue_processing_lock:
+        batch_queue_active = runtimedata.batch_queue_processing
+        batch_queue_time = runtimedata.batch_queue_processing_start_time
+    
+    return jsonify({
+        'parsing': {
+            'count': len(parsing_items),
+            'items': parsing_items[:10]  # First 10
+        },
+        'pending': {
+            'count': len(pending_items),
+            'items': pending_items[:10]
+        },
+        'download_queue': {
+            'count': len(download_items),
+            'items': download_items[:10]
+        },
+        'flags': {
+            'batch_parse_in_progress': batch_parse_active,
+            'batch_parse_elapsed': time.time() - batch_parse_time if batch_parse_time else None,
+            'batch_queue_processing': batch_queue_active,
+            'batch_queue_elapsed': time.time() - batch_queue_time if batch_queue_time else None
+        }
+    })
+
 
 @app.route('/api/parse_url/<path:url>', methods=['POST'])
 @login_required

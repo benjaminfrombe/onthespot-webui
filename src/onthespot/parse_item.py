@@ -18,6 +18,12 @@ from .utils import format_local_id
 from .otsconfig import config
 
 logger = get_logger('parse_item')
+
+def _debug_log(message):
+    """Debug logging only when debug_playlist_flow is enabled"""
+    if config.get('debug_playlist_flow', False):
+        logger.info(f"[DEBUG FLOW] {message}")
+
 # Audio
 APPLE_MUSIC_URL_REGEX = re.compile(r'https?://music.apple.com/([a-z]{2})/(?P<type>album|playlist|artist)(?:/(?P<title>[-a-z0-9]+))?/(?P<id>[\w.-]+)(?:\?i=(?P<track_id>\d+))?(?:&.*)?$')
 BANDCAMP_URL_REGEX = re.compile(r'https?://[a-z0-9-]+.bandcamp.com(?:/(?P<type>track|album|music)/[a-z0-9-]+)?')
@@ -33,6 +39,8 @@ YOUTUBE_MUSIC_URL_REGEX = re.compile(r"https?://music.youtube.com/(watch\?v=(?P<
 CRUNCHYROLL_URL_REGEX = re.compile(r"https?://(www.)?crunchyroll.com/(?P<type>watch|series)/(musicvideo/)?(?P<id>[-A-Z0-9]+)/(?P<title>[-a-z0-9]+)")
 
 def parse_url(url):
+    _debug_log(f"parse_url called with: {url}")
+    
     # Audio
     if re.match(APPLE_MUSIC_URL_REGEX, url):
         match = re.search(APPLE_MUSIC_URL_REGEX, url)
@@ -152,6 +160,9 @@ def parse_url(url):
         except Exception as e:
             logger.info(f'Error Possibly Invalid Url: {url}, "{e}"')
             return False
+    
+    _debug_log(f"Parsed URL: service={item_service}, type={item_type}, id={item_id}")
+    
     with parsing_lock:
         parsing[item_id] = {
             'item_url': url,
@@ -159,54 +170,81 @@ def parse_url(url):
             'item_type': item_type,
             'item_id': item_id
         }
+        _debug_log(f"Added to parsing dict: {item_id}, total parsing items: {len(parsing)}")
 
 
 def parsingworker():
+    _debug_log("parsingworker thread started")
     while True:
         if parsing:
             try:
+                with parsing_lock:
+                    parsing_count = len(parsing)
+                _debug_log(f"parsingworker: {parsing_count} items in parsing queue")
+                
                 item_id = next(iter(parsing))
                 with parsing_lock:
                     item = parsing.pop(item_id)
+                
+                _debug_log(f"parsingworker picked up: {item}")
                 logger.info(f"Parsing: {item}")
 
                 current_service = item['item_service']
                 current_type = item['item_type']
                 current_id = item['item_id']
                 current_url = item['item_url']
+                
+                _debug_log(f"Getting token for service: {current_service}")
                 token = get_account_token(current_service)
 
                 # Check if token is valid
                 if token is None:
                     logger.error(f"Failed to get valid token for {current_service}. Re-queuing item for retry: {current_url}")
+                    _debug_log(f"Token is None for {current_service}, re-queuing")
                     # Put the item back into parsing queue for retry
                     with parsing_lock:
                         parsing[item_id] = item
                     time.sleep(5)  # Wait before retrying to give accounts time to initialize
                     continue
 
+                _debug_log(f"Processing: service={current_service}, type={current_type}, id={current_id}")
+
                 if current_service == "spotify":
                     if current_type == "playlist":
+                        _debug_log(f"Handling Spotify playlist: {current_id}")
                         # Set batch parse flag
                         runtimedata.set_batch_parse_flag(True)
+                        _debug_log("Set batch_parse_in_progress = True")
                         
                         try:
                             logger.info(f"Starting to parse playlist: {current_id}")
+                            _debug_log(f"Calling spotify_get_playlist_items for: {current_id}")
                             items = spotify_get_playlist_items(token, current_id)
+                            _debug_log(f"Got {len(items)} items from spotify_get_playlist_items")
+                            
+                            _debug_log(f"Calling spotify_get_playlist_data for: {current_id}")
                             playlist_name, playlist_by, playlist_image_url = spotify_get_playlist_data(token, current_id)
+                            _debug_log(f"Playlist data: name='{playlist_name}', by='{playlist_by}'")
+                            
                             total_items = len(items)
                             logger.info(f"Playlist '{playlist_name}' has {total_items} items, adding to pending queue...")
+                            _debug_log(f"About to process {total_items} items into pending queue")
+                            
+                            added_count = 0
+                            skipped_count = 0
                             
                             for index, item in enumerate(items):
                                 try:
                                     track_obj = item['track']
                                     if track_obj is None:
                                         logger.warning(f"Skipping None track at position {index + 1} in playlist {playlist_name}")
+                                        skipped_count += 1
                                         continue
                                     
                                     item_id = track_obj.get('id')
                                     if not item_id:
                                         logger.warning(f"Skipping track with no ID at position {index + 1} in playlist {playlist_name}")
+                                        skipped_count += 1
                                         continue
                                     
                                     item_type = track_obj.get('type', 'track')
@@ -229,11 +267,21 @@ def parsingworker():
                                             # Cache the full track object from playlist response
                                             'cached_track_data': track_obj
                                         }
+                                    added_count += 1
+                                    
+                                    if config.get('debug_playlist_flow', False) and (index < 3 or index >= total_items - 1):
+                                        _debug_log(f"Added track {index + 1}/{total_items}: {track_obj.get('name', 'Unknown')} (ID: {item_id})")
+                                        
                                 except (TypeError, KeyError) as e:
                                     logger.error(f'Error processing track at index {index} in playlist: {e}')
+                                    skipped_count += 1
                                     continue
                             
-                            logger.info(f"Finished adding {total_items} items from playlist '{playlist_name}' to pending queue")
+                            with pending_lock:
+                                total_pending = len(pending)
+                            
+                            logger.info(f"Finished adding {added_count} items from playlist '{playlist_name}' to pending queue (skipped: {skipped_count}, total in pending: {total_pending})")
+                            _debug_log(f"Pending queue now has {total_pending} items total")
                             
                             # Download playlist cover after adding all items
                             if playlist_image_url and config.get('save_album_cover'):

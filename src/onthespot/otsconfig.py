@@ -39,6 +39,7 @@ class Config:
             # System Variables
             "version": "v1.1", # Application version
             "debug_mode": False, # Enable debug mode
+            "debug_playlist_flow": False, # Enable detailed playlist/album flow debugging
             "language_index": 0, # Language Index
             "total_downloaded_items": 0, # Total downloaded items
             "total_downloaded_data": 0, # Total downloaded data in bytes

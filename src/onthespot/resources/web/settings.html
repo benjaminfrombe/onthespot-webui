@@ -701,6 +701,14 @@
                     </label>
                 </div>
                 <div class="setting-row">
+                    <label for="debug_playlist_flow">Debug Playlist/Album Flow</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="debug_playlist_flow" {% if config.debug_playlist_flow %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <small style="display: block; color: #666; margin-top: 5px;">Enable detailed logging for playlist/album downloads (check Docker logs)</small>
+                </div>
+                <div class="setting-row">
                     <label for="mirror_spotify_playback">Mirror Spotify Playback</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="mirror_spotify_playback" {% if config.mirror_spotify_playback %}checked{% endif %}>
@@ -1351,6 +1359,7 @@
                 download_open_btn: document.getElementById('download_open_btn').checked,
                 download_locate_btn: document.getElementById('download_locate_btn').checked,
                 download_delete_btn: document.getElementById('download_delete_btn').checked,
+                debug_playlist_flow: document.getElementById('debug_playlist_flow').checked,
                 show_search_thumbnails: document.getElementById('show_search_thumbnails').checked,
                 show_download_thumbnails: document.getElementById('show_download_thumbnails').checked,
                 thumbnail_size: document.getElementById('thumbnail_size').value,
