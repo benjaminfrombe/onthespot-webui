@@ -176,9 +176,9 @@ class DownloadWorker:
         current_time = time.time()
         time_since_last = current_time - last_progress_update if last_progress_update > 0 else 0
         
-        # Skip update if progress changed by less than 0.5% and status unchanged
+        # Skip update if progress changed by less than 0.2% and status unchanged
         if (status == current_status and 
-            abs(progress_value - current_progress) < 0.5 and 
+            abs(progress_value - current_progress) < 0.2 and 
             progress_value != 0 and progress_value != 100):
             return
         
