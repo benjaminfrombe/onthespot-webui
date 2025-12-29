@@ -1093,13 +1093,9 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
                 elif item_type == "playlist":
                     tracks_total = item.get('tracks', {}).get('total')
                     if isinstance(tracks_total, int):
-                        playlist_id = item['id']
-                        if playlist_id in playlist_year_cache:
-                            rel_year = playlist_year_cache[playlist_id]
-                        else:
-                            rel_year = spotify_get_playlist_updated_year(headers, playlist_id, tracks_total)
-                            playlist_year_cache[playlist_id] = rel_year
-                        item_name = f"[Y:{rel_year or '????'}] [T:{tracks_total}] {item['name']}"
+                        # Skip year fetching for search results (2 extra API calls per playlist!)
+                        # Year is nice-to-have, but speed > metadata completeness for search
+                        item_name = f"[T:{tracks_total}] {item['name']}"
                     else:
                         item_name = f"{item['name']}"
                     owner = item.get('owner') or {}
