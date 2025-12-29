@@ -509,18 +509,42 @@ class WebSocketBroadcaster(threading.Thread):
         super().__init__()
         self.is_running = True
         self.daemon = True
+        self.min_emit_interval = 0.2  # Throttle emits to reduce network churn
+        self.last_emit_time = 0.0
+        self.last_queue_size = 0
+        self.last_update_time = 0.0
+
+    @staticmethod
+    def _latest_update_time(queue_data):
+        latest_update = 0.0
+        for item in queue_data.values():
+            item_update = item.get('last_update_time', 0.0)
+            if item_update > latest_update:
+                latest_update = item_update
+        return latest_update
 
     def run(self):
         logger.info('WebSocketBroadcaster started')
         while self.is_running:
             try:
-                time.sleep(0.033)  # Broadcast 30 times per second for ultra-smooth progress
+                time.sleep(0.1)
                 
                 with download_queue_lock:
                     queue_data = dict(download_queue)
-                
-                # Emit queue update to all connected clients
-                socketio.emit('queue_update', queue_data, namespace='/')
+                queue_size = len(queue_data)
+                latest_update = self._latest_update_time(queue_data)
+                now = time.time()
+                should_emit = (
+                    queue_size != self.last_queue_size or
+                    latest_update > self.last_update_time
+                )
+
+                if should_emit and (now - self.last_emit_time) >= self.min_emit_interval:
+                    # Emit only when something changed and at a reasonable rate.
+                    socketio.emit('queue_update', queue_data, namespace='/')
+                    self.last_emit_time = now
+                    self.last_queue_size = queue_size
+                    self.last_update_time = latest_update
                 
             except Exception as e:
                 logger.error(f"Error in WebSocketBroadcaster: {str(e)}")
