@@ -815,8 +815,7 @@
         let lastRenderedIds = [];
         const PROGRESS_INTERPOLATION_MS = 700;
         const progressSmoothers = new Map();
-        const MAX_PROGRESS_RATE = 200; // % per second (increased from 40 to handle fast downloads)
-        const STALE_RATE_MS = 1200;
+        const STALE_RATE_MS = 1200;  // If no update for 1.2s, fall back to interpolation
 
         // ============= UI FUNCTIONS =============
         function toggleFilters() {
@@ -1007,7 +1006,9 @@
                 const delta = safeTarget - state.display;
                 const rate = delta / deltaT;
                 if (rate > 0) {
-                    state.rate = Math.min(rate, MAX_PROGRESS_RATE);
+                    // Use actual rate, no artificial cap
+                    // If download is fast, progress bar should be fast too!
+                    state.rate = rate;
                 }
             }
 
