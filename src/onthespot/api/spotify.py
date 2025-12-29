@@ -721,28 +721,32 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
         
         headers = {}
         
-        if config.get('debug_playlist_flow', False):
+        debug_enabled = config.get('debug_playlist_flow', False)
+        if debug_enabled:
             logger.info(f"[DEBUG FLOW] spotify_get_playlist_items: about to call token.tokens().get()")
         
         # Get token with timeout protection (token.tokens() can hang on dead sessions)
         token_error = None
         token_result = None
         
+        logger.info(f"[DEBUG HANG TEST] About to define function")
+        
         def get_token_with_timeout():
             nonlocal token_result, token_error
+            logger.info(f"[DEBUG HANG TEST] Thread function executing")
             try:
-                if config.get('debug_playlist_flow', False):
+                if debug_enabled:
                     logger.info(f"[DEBUG FLOW] Inside get_token_with_timeout thread, calling token.tokens()")
                 token_result = token.tokens().get('user-read-email')
-                if config.get('debug_playlist_flow', False):
+                if debug_enabled:
                     logger.info(f"[DEBUG FLOW] token.tokens().get() returned successfully")
             except Exception as e:
-                if config.get('debug_playlist_flow', False):
+                if debug_enabled:
                     logger.info(f"[DEBUG FLOW] token.tokens().get() raised exception: {e}")
                 token_error = e
         
-        import threading
-        if config.get('debug_playlist_flow', False):
+        logger.info(f"[DEBUG HANG TEST] Function defined, about to create thread")
+        if debug_enabled:
             logger.info(f"[DEBUG FLOW] Creating thread for token retrieval")
         token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
         token_thread.start()
