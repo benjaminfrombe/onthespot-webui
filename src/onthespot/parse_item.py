@@ -12,7 +12,7 @@ from .api.tidal import tidal_get_album_track_ids, tidal_get_artist_album_ids, ti
 from .api.youtube_music import youtube_music_get_channel_track_ids, youtube_music_get_playlist_data
 from .api.generic import generic_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_show_episode_ids
-from .runtimedata import account_pool, get_logger, parsing, download_queue, pending, parsing_lock, pending_lock
+from .runtimedata import account_pool, get_logger, parsing, download_queue, pending, parsing_lock, pending_lock, download_queue_lock
 import onthespot.runtimedata as runtimedata
 from .utils import format_local_id
 from .otsconfig import config
