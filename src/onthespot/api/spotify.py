@@ -120,39 +120,31 @@ def _spotify_extract_year(value):
 
 
 def spotify_get_playlist_updated_year(headers, playlist_id, tracks_total):
-    """Best-effort playlist "updated year" based on newest track `added_at`.
-
-    Spotify playlist objects don't expose an explicit last-updated timestamp.
-    This approximates it by sampling `added_at` from the first and last track.
+    """Get playlist last modified year based on most recently added track.
+    
+    Optimized: Only fetches the LAST track's added_at (1 API call instead of 2).
+    The most recent addition is the best indicator of when playlist was updated.
     """
     if not isinstance(tracks_total, int) or tracks_total <= 0:
         return None
 
-    def _fetch_added_at(offset):
-        resp = make_call(
-            f"{BASE_URL}/playlists/{playlist_id}/tracks",
-            params={
-                'offset': str(max(0, offset)),
-                'limit': '1',
-                'fields': 'items(added_at)'
-            },
-            headers=headers,
-            skip_cache=True,
-        )
-        if not resp or not resp.get('items'):
-            return None
-        return resp['items'][0].get('added_at')
-
-    first_added_at = _fetch_added_at(0)
-    last_added_at = _fetch_added_at(tracks_total - 1)
-
-    years = []
-    for added_at in (first_added_at, last_added_at):
-        year = _spotify_extract_year(added_at)
-        if year is not None:
-            years.append(year)
-
-    return str(max(years)) if years else None
+    # Fetch only the LAST track (most recent addition)
+    resp = make_call(
+        f"{BASE_URL}/playlists/{playlist_id}/tracks",
+        params={
+            'offset': str(max(0, tracks_total - 1)),
+            'limit': '1',
+            'fields': 'items(added_at)'
+        },
+        headers=headers,
+        skip_cache=False,  # Cache this to avoid repeated calls for same playlist
+    )
+    
+    if not resp or not resp.get('items'):
+        return None
+    
+    last_added_at = resp['items'][0].get('added_at')
+    return str(_spotify_extract_year(last_added_at)) if _spotify_extract_year(last_added_at) else None
 
 def clear_album_track_ids_cache():
     """Clear the album track IDs cache to free memory."""
@@ -1093,9 +1085,14 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
                 elif item_type == "playlist":
                     tracks_total = item.get('tracks', {}).get('total')
                     if isinstance(tracks_total, int):
-                        # Skip year fetching for search results (2 extra API calls per playlist!)
-                        # Year is nice-to-have, but speed > metadata completeness for search
-                        item_name = f"[T:{tracks_total}] {item['name']}"
+                        playlist_id = item['id']
+                        # Fetch last modified year (optimized: 1 API call per playlist)
+                        if playlist_id in playlist_year_cache:
+                            rel_year = playlist_year_cache[playlist_id]
+                        else:
+                            rel_year = spotify_get_playlist_updated_year(headers, playlist_id, tracks_total)
+                            playlist_year_cache[playlist_id] = rel_year
+                        item_name = f"[Y:{rel_year or '????'}] [T:{tracks_total}] {item['name']}"
                     else:
                         item_name = f"{item['name']}"
                     owner = item.get('owner') or {}
