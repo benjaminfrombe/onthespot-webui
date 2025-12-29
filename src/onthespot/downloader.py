@@ -445,8 +445,7 @@ class DownloadWorker:
                 account_index = self._find_account_index(item_service, token) if token else None
 
                 try:
-                    # For Spotify albums, we'll pass the album lock to the metadata function
-                    # so it can minimize the critical section
+                    # Fetch metadata (for playlists this is done just-in-time, for albums it may use cache)
                     album_lock_ctx = None
                     if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
                         album_key = f"{item_service}:{item.get('parent_id')}"
@@ -459,6 +458,22 @@ class DownloadWorker:
                         item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
                     else:
                         item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                    
+                    # Update download_queue with real metadata if this was a minimal playlist item
+                    if item.get('needs_metadata_fetch'):
+                        with download_queue_lock:
+                            if local_id in download_queue:
+                                download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
+                                download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
+                                download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
+                                download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
+                                download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
+                                download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
+                                download_queue[local_id]['track_number'] = item_metadata.get('track_number')
+                                download_queue[local_id]['needs_metadata_fetch'] = False
+                                # Update our local item reference too
+                                item.update(download_queue[local_id])
+                        logger.info(f"Fetched metadata for playlist track: {item_metadata.get('title')} by {item_metadata.get('artists')}")
 
                     # album number shim from enumerated items, i hate youtube
                     if item_service == 'youtube_music' and item.get('parent_category') == 'album':

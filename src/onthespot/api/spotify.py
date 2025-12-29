@@ -706,9 +706,13 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath, _retry=Fal
 
 
 def spotify_get_playlist_items(token, playlist_id, _retry=False):
+    """
+    Get playlist items with MINIMAL data (just IDs and types).
+    For playlists, we fetch metadata per-track during download to avoid API hammering.
+    """
     logger.info(f"Getting items in playlist: '{playlist_id}'")
     
-    # Cache debug flag to avoid repeated config.get() calls
+    # Cache debug flag ONCE to avoid config deadlocks inside loop
     debug_enabled = config.get('debug_playlist_flow', False)
     
     if debug_enabled:
@@ -719,7 +723,7 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
     limit = 100
 
     while True:
-        url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}'
+        url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}&fields=items(track(id,type)),total'
         
         # Use app token if available (much higher rate limits than session token)
         try:
@@ -737,7 +741,7 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
             return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
 
         if debug_enabled:
-            logger.info(f"[DEBUG FLOW] Calling make_call() for offset={offset}, limit={limit}")
+            logger.info(f"[DEBUG FLOW] Calling make_call() for offset={offset}, limit={limit} (minimal fields)")
 
         # Use cache for playlists to avoid rate limiting (playlists don't change that often)
         # First request per session will be cached, subsequent requests use cache
@@ -753,7 +757,7 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
         if resp['total'] <= offset:
             break
     
-    logger.info(f"Retrieved {len(items)} items from playlist {playlist_id}")
+    logger.info(f"Retrieved {len(items)} minimal items from playlist {playlist_id}")
     return items
 
 

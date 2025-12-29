@@ -211,77 +211,83 @@ def parsingworker():
 
                 if current_service == "spotify":
                     if current_type == "playlist":
+                        # For playlists: minimal fetch, instant queue, lazy metadata
+                        # This avoids API hammering and provides instant user feedback
                         _debug_log(f"Handling Spotify playlist: {current_id}")
-                        # Set batch parse flag
-                        runtimedata.set_batch_parse_flag(True)
-                        _debug_log("Set batch_parse_in_progress = True")
                         
+                        # NO batch_parse flag for playlists (we add directly to download_queue)
                         try:
                             logger.info(f"Starting to parse playlist: {current_id}")
                             _debug_log(f"Calling spotify_get_playlist_items for: {current_id}")
                             items = spotify_get_playlist_items(token, current_id)
-                            _debug_log(f"Got {len(items)} items from spotify_get_playlist_items")
+                            _debug_log(f"Got {len(items)} minimal items from spotify_get_playlist_items")
                             
                             _debug_log(f"Calling spotify_get_playlist_data for: {current_id}")
                             playlist_name, playlist_by, playlist_image_url = spotify_get_playlist_data(token, current_id)
                             _debug_log(f"Playlist data: name='{playlist_name}', by='{playlist_by}'")
                             
                             total_items = len(items)
-                            logger.info(f"Playlist '{playlist_name}' has {total_items} items, adding to pending queue...")
-                            _debug_log(f"About to process {total_items} items into pending queue")
+                            logger.info(f"Playlist '{playlist_name}' has {total_items} items, adding to download queue with MINIMAL data (metadata will be fetched per-track during download)")
+                            _debug_log(f"About to add {total_items} items DIRECTLY to download_queue")
                             
                             added_count = 0
                             skipped_count = 0
                             
-                            for index, item in enumerate(items):
-                                try:
-                                    track_obj = item['track']
-                                    if track_obj is None:
-                                        logger.warning(f"Skipping None track at position {index + 1} in playlist {playlist_name}")
-                                        skipped_count += 1
-                                        continue
-                                    
-                                    item_id = track_obj.get('id')
-                                    if not item_id:
-                                        logger.warning(f"Skipping track with no ID at position {index + 1} in playlist {playlist_name}")
-                                        skipped_count += 1
-                                        continue
-                                    
-                                    item_type = track_obj.get('type', 'track')
-                                    local_id = format_local_id(item_id)
-                                    
-                                    # Store full track object to avoid redundant API calls in QueueWorker
-                                    # This contains: name, artists, album, duration, explicit, isrc, etc.
-                                    with pending_lock:
-                                        pending[local_id] = {
+                            # Add items DIRECTLY to download_queue with minimal info
+                            # Metadata will be fetched by DownloadWorker right before downloading each track
+                            with download_queue_lock:
+                                for index, item in enumerate(items):
+                                    try:
+                                        track_obj = item.get('track')
+                                        if track_obj is None:
+                                            logger.warning(f"Skipping None track at position {index + 1} in playlist {playlist_name}")
+                                            skipped_count += 1
+                                            continue
+                                        
+                                        item_id = track_obj.get('id')
+                                        if not item_id:
+                                            logger.warning(f"Skipping track with no ID at position {index + 1} in playlist {playlist_name}")
+                                            skipped_count += 1
+                                            continue
+                                        
+                                        item_type = track_obj.get('type', 'track')
+                                        local_id = format_local_id(item_id)
+                                        
+                                        # Add to download_queue with MINIMAL info
+                                        # Metadata will be fetched just-in-time by DownloadWorker
+                                        download_queue[local_id] = {
                                             'local_id': local_id,
+                                            'available': True,
                                             'item_service': 'spotify',
                                             'item_type': item_type,
                                             'item_id': item_id,
+                                            'item_status': 'Waiting',
+                                            'file_path': None,
+                                            'item_name': f'Track {index + 1}',  # Placeholder, will be updated
+                                            'item_by': '',  # Will be fetched during download
                                             'parent_category': 'playlist',
                                             'playlist_name': playlist_name,
                                             'playlist_by': playlist_by,
                                             'playlist_number': str(index + 1),
                                             'playlist_total': total_items,
-                                            'playlist_image_url': playlist_image_url,
-                                            # Cache the full track object from playlist response
-                                            'cached_track_data': track_obj
+                                            'item_thumbnail': playlist_image_url,  # Use playlist cover as placeholder
+                                            'item_url': '',  # Will be fetched during download
+                                            'progress': 0,
+                                            'last_update_time': time.time(),
+                                            'needs_metadata_fetch': True  # Flag for DownloadWorker
                                         }
-                                    added_count += 1
-                                    
-                                    if config.get('debug_playlist_flow', False) and (index < 3 or index >= total_items - 1):
-                                        _debug_log(f"Added track {index + 1}/{total_items}: {track_obj.get('name', 'Unknown')} (ID: {item_id})")
+                                        added_count += 1
                                         
-                                except (TypeError, KeyError) as e:
-                                    logger.error(f'Error processing track at index {index} in playlist: {e}')
-                                    skipped_count += 1
-                                    continue
+                                        if config.get('debug_playlist_flow', False) and (index < 3 or index >= total_items - 1):
+                                            _debug_log(f"Added track {index + 1}/{total_items} to download_queue (ID: {item_id})")
+                                            
+                                    except (TypeError, KeyError) as e:
+                                        logger.error(f'Error processing track at index {index} in playlist: {e}')
+                                        skipped_count += 1
+                                        continue
                             
-                            with pending_lock:
-                                total_pending = len(pending)
-                            
-                            logger.info(f"Finished adding {added_count} items from playlist '{playlist_name}' to pending queue (skipped: {skipped_count}, total in pending: {total_pending})")
-                            _debug_log(f"Pending queue now has {total_pending} items total")
+                            logger.info(f"Instantly added {added_count} items from playlist '{playlist_name}' to download_queue (skipped: {skipped_count})")
+                            _debug_log(f"Download queue now has {len(download_queue)} items total")
                             
                             # Download playlist cover after adding all items
                             if playlist_image_url and config.get('save_album_cover'):
@@ -320,12 +326,10 @@ def parsingworker():
                                     logger.error(f"Failed to save playlist cover: {e}")
                         except Exception as e:
                             logger.error(f"Exception parsing playlist {current_id}: {e}\nTraceback: {traceback.format_exc()}")
-                            raise  # Re-raise to be caught by outer exception handler
-                        finally:
-                            # Always clear batch parse flag
-                            runtimedata.set_batch_parse_flag(False)
-                            logger.info(f"Cleared batch_parse_in_progress flag for playlist {current_id}")
+                            # Don't re-raise - playlist is already in download_queue
+                            logger.warning(f"Playlist {current_id} had errors but items are queued")
                         
+                        # No finally block needed - we don't set batch_parse flag for playlists
                         continue
                     elif current_type == "liked_songs":
                         # Set batch parse flag
