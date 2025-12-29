@@ -163,7 +163,7 @@ class DownloadWorker:
         """Update progress for web interface - updates both item and download_queue
         
         Throttled to reduce lock contention with WebSocketBroadcaster.
-        Only updates if progress changed by 1% or status changed.
+        Only updates if progress changed by 0.5% or status changed.
         """
         local_id = item.get('local_id')
         
@@ -171,16 +171,27 @@ class DownloadWorker:
         current_progress = item.get('progress', 0)
         current_status = item.get('item_status', '')
         
+        # Track time between progress updates for debugging
+        last_progress_update = getattr(item, '_last_progress_update_time', 0)
+        current_time = time.time()
+        time_since_last = current_time - last_progress_update if last_progress_update > 0 else 0
+        
         # Skip update if progress changed by less than 0.5% and status unchanged
         if (status == current_status and 
             abs(progress_value - current_progress) < 0.5 and 
             progress_value != 0 and progress_value != 100):
             return
         
+        # Debug logging to trace progress update timing pattern
+        if config.get('debug_playlist_flow', False) and status == "Downloading" and progress_value > 0:
+            logger.info(f"[DEBUG PROGRESS] {local_id}: {current_progress}% → {progress_value}% (Δ{time_since_last:.2f}s since last update)")
+        
+        item['_last_progress_update_time'] = current_time
+        
         # Update local item dict
         item['progress'] = progress_value
         item['item_status'] = status
-        item['last_update_time'] = time.time()
+        item['last_update_time'] = current_time
         
         # Also update in download_queue to ensure websocket broadcasts it
         if local_id:
@@ -188,7 +199,7 @@ class DownloadWorker:
                 if local_id in download_queue:
                     download_queue[local_id]['progress'] = progress_value
                     download_queue[local_id]['item_status'] = status
-                    download_queue[local_id]['last_update_time'] = time.time()
+                    download_queue[local_id]['last_update_time'] = current_time
 
 
     def yt_dlp_progress_hook(self, item, d):
