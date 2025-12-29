@@ -41,10 +41,27 @@
             opacity: 1;
         }
 
-        /* Status badge fill animation */
+        /* Status badge fill animation (transform-based for smoother rendering) */
         .status-badge {
-            transition: background-size 1.2s ease-out;
-            will-change: background-size;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .status-badge::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
+            transform: scaleX(var(--progress, 0));
+            transform-origin: left center;
+            transition: transform 1.2s ease-out;
+            will-change: transform;
+            z-index: 0;
+        }
+
+        .status-badge .status-label {
+            position: relative;
+            z-index: 1;
         }
 
         /* Image preview popup */
@@ -336,9 +353,6 @@
         }
 
         .status-downloading {
-            background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%) no-repeat left center,
-                        rgba(59, 130, 246, 0.2);
-            background-size: 0% 100%, 100% 100%;
             color: #fff;
             transform: translateZ(0);  /* Force GPU acceleration */
         }
@@ -947,7 +961,7 @@
 
             const statusBadge = row.querySelector('[data-cell="status"] .status-badge');
             if (statusBadge && (!item || item.item_status === 'Downloading')) {
-                statusBadge.style.backgroundSize = `${progressValue}% 100%, 100% 100%`;
+                statusBadge.style.setProperty('--progress', (progressValue / 100).toFixed(4));
             }
 
         }
@@ -1010,8 +1024,7 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        // Simple direct update - CSS transition handles smoothing (0.1s ease-out)
-                        statusBadge.style.backgroundSize = `${newProgress}% 100%, 100% 100%`;
+                        statusBadge.style.setProperty('--progress', (newProgress / 100).toFixed(4));
                     }
                 }
 
@@ -1148,10 +1161,11 @@
             
             // Add progress for downloading status using background-size
             if (effectiveStatus === 'Downloading' || effectiveStatus === 'Reconnecting') {
-                return `<span class="status-badge ${className}" style="background-size: ${progress}% 100%, 100% 100%;">${displayText || 'N/A'}</span>`;
+                const progressValue = Math.max(0, Math.min(100, Number(progress) || 0));
+                return `<span class="status-badge ${className}" style="--progress: ${(progressValue / 100).toFixed(4)};"><span class="status-label">${displayText || 'N/A'}</span></span>`;
             }
             
-            return `<span class="status-badge ${className}">${displayText || 'N/A'}</span>`;
+            return `<span class="status-badge ${className}"><span class="status-label">${displayText || 'N/A'}</span></span>`;
         }
 
         function createTableRow(item) {
