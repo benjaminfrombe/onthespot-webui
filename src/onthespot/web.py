@@ -179,28 +179,6 @@ class QueueWorker(threading.Thread):
                 if pending:
                     # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
                     runtimedata.set_batch_queue_processing_flag(True)
-                    
-                    try:
-                        # Process pending items in batches to avoid long blocking for huge playlists
-                        BATCH_SIZE = 50  # Process 50 items at a time
-                        with pending_lock:
-                            # Get first BATCH_SIZE items
-                            all_items = list(pending.items())
-                            # Sort by playlist number to maintain order
-                            all_items.sort(key=lambda x: int(x[1].get('playlist_number', 0) or 0))
-                            
-                            items_to_process = all_items[:BATCH_SIZE]
-                            # Remove processed items from pending
-                            for local_id, _ in items_to_process:
-                                del pending[local_id]
-                            
-                            remaining = len(pending)
-                        
-                        logger.info(f"QueueWorker processing {len(items_to_process)} items from pending queue ({remaining} remaining)")
-                        
-                if pending:
-                    # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
-                    runtimedata.set_batch_queue_processing_flag(True)
                     _debug_log("Set batch_queue_processing = True")
                     
                     try:
