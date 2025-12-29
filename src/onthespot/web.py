@@ -514,7 +514,7 @@ class WebSocketBroadcaster(threading.Thread):
         logger.info('WebSocketBroadcaster started')
         while self.is_running:
             try:
-                time.sleep(0.05)  # Broadcast 20 times per second for ultra-smooth progress
+                time.sleep(0.033)  # Broadcast 30 times per second for ultra-smooth progress
                 
                 with download_queue_lock:
                     queue_data = dict(download_queue)

@@ -41,9 +41,10 @@
             opacity: 1;
         }
 
-        /* Progress bar */
+        /* Progress bar - faster transition to match 30 Hz broadcasts */
         .progress-bar-fill {
-            transition: width 0.15s ease-out;
+            transition: width 0.1s ease-out;
+            will-change: width;  /* GPU acceleration */
         }
 
         /* Image preview popup */
@@ -340,7 +341,8 @@
                         rgba(59, 130, 246, 0.2);
             background-size: 0% 100%, 100% 100%;
             color: #fff;
-            transition: background-size 0.15s ease-out;
+            transition: background-size 0.1s ease-out;
+            will-change: background-size;  /* GPU acceleration */
         }
 
         .status-waiting {
