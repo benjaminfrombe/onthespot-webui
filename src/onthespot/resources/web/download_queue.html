@@ -815,7 +815,7 @@
         let lastRenderedIds = [];
         const PROGRESS_INTERPOLATION_MS = 700;
         const progressSmoothers = new Map();
-        const MAX_PROGRESS_RATE = 40; // % per second
+        const MAX_PROGRESS_RATE = 200; // % per second (increased from 40 to handle fast downloads)
         const STALE_RATE_MS = 1200;
 
         // ============= UI FUNCTIONS =============
@@ -1131,8 +1131,13 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        // Update progress for downloading items using background-size
-                        statusBadge.style.backgroundSize = `${newProgress}% 100%, 100% 100%`;
+                        // Smoothly animate progress using CSS transition (already defined as 0.1s ease-out)
+                        const targetProgress = newProgress || 0;
+                        
+                        // Use requestAnimationFrame to batch DOM updates for smooth rendering
+                        requestAnimationFrame(() => {
+                            statusBadge.style.backgroundSize = `${targetProgress}% 100%, 100% 100%`;
+                        });
                     }
                 }
 
