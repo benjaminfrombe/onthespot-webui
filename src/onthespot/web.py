@@ -126,26 +126,9 @@ app.config['PERMANENT_SESSION_LIFETIME'] = REMEMBER_DURATION
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# Initialize SocketIO for real-time updates
-# Try gevent (websocket-only) without monkey-patching; fall back to threading/polling
-_async_mode = "threading"
-_transports = ["polling"]
-try:
-    import gevent  # noqa: F401
-    import geventwebsocket  # noqa: F401
-
-    _async_mode = "gevent"
-    _transports = ["websocket"]  # force websocket to avoid long-polling overhead
-    logger.info("SocketIO using gevent async_mode (websocket only, no monkey patch)")
-except Exception as e:
-    logger.info(f"SocketIO gevent not available, using threading/polling: {e}")
-
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode=_async_mode,
-    transports=_transports,
-)
+# Initialize SocketIO - use simple threading mode (proven to work smoothly)
+# Gevent was causing choppy progress due to greenlet scheduling issues
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 
 class QueueWorker(threading.Thread):
@@ -509,134 +492,18 @@ class WebSocketBroadcaster(threading.Thread):
         super().__init__()
         self.is_running = True
         self.daemon = True
-        self.min_emit_interval = 0.2  # Throttle emits to reduce network churn
-        self.progress_threshold = 1.0  # Only send progress updates when >= 1%
-        self.progress_emit_interval = 0.05  # 20Hz lightweight progress updates
-        self.progress_delta_threshold = 0.2
-        self.last_emit_time = 0.0
-        self.last_queue_size = 0
-        self.last_update_time = 0.0
-        self.last_item_update_times = {}
-        self.last_item_progress = {}
-        self.last_item_status = {}
-        self.last_progress_emit_time = 0.0
-        self.last_progress_snapshot = {}
-        self.full_sync_interval = 30.0
-        self.last_full_sync = 0.0
-
-    @staticmethod
-    def _latest_update_time(queue_data):
-        latest_update = 0.0
-        for item in queue_data.values():
-            item_update = item.get('last_update_time', 0.0)
-            if item_update > latest_update:
-                latest_update = item_update
-        return latest_update
 
     def run(self):
         logger.info('WebSocketBroadcaster started')
         while self.is_running:
             try:
-                time.sleep(0.1)
+                time.sleep(0.1)  # Broadcast 10 times per second
                 
                 with download_queue_lock:
                     queue_data = dict(download_queue)
-                queue_size = len(queue_data)
-                latest_update = self._latest_update_time(queue_data)
-                now = time.time()
-                should_emit = (
-                    queue_size != self.last_queue_size or
-                    latest_update > self.last_update_time
-                )
-
-                if should_emit and (now - self.last_emit_time) >= self.min_emit_interval:
-                    removed_ids = [item_id for item_id in self.last_item_update_times.keys()
-                                   if item_id not in queue_data]
-                    updated_items = {}
-                    for item_id, item in queue_data.items():
-                        item_update = item.get('last_update_time', 0.0)
-                        last_update = self.last_item_update_times.get(item_id, 0.0)
-                        if item_update > last_update or item_id not in self.last_item_update_times:
-                            updated_items[item_id] = item
-
-                    send_full = (now - self.last_full_sync) >= self.full_sync_interval
-                    if send_full or (not self.last_item_update_times and queue_size > 0):
-                        socketio.emit('queue_update', {"full": True, "data": queue_data}, namespace='/')
-                        self.last_item_update_times = {
-                            item_id: item.get('last_update_time', 0.0)
-                            for item_id, item in queue_data.items()
-                        }
-                        self.last_item_progress = {
-                            item_id: item.get('progress', 0.0)
-                            for item_id, item in queue_data.items()
-                        }
-                        self.last_item_status = {
-                            item_id: item.get('item_status')
-                            for item_id, item in queue_data.items()
-                        }
-                        self.last_full_sync = now
-                    elif updated_items or removed_ids:
-                        filtered_updates = {}
-                        for item_id, item in updated_items.items():
-                            status = item.get('item_status')
-                            progress = item.get('progress', 0.0)
-                            last_progress = self.last_item_progress.get(item_id, 0.0)
-                            last_status = self.last_item_status.get(item_id)
-
-                            if status != last_status:
-                                filtered_updates[item_id] = item
-                                continue
-
-                            if status == "Downloading":
-                                if abs(progress - last_progress) >= self.progress_threshold:
-                                    filtered_updates[item_id] = item
-                            else:
-                                filtered_updates[item_id] = item
-
-                        if not filtered_updates and not removed_ids:
-                            continue
-
-                        socketio.emit(
-                            'queue_update',
-                            {"full": False, "updated": filtered_updates, "removed": removed_ids},
-                            namespace='/'
-                        )
-                        for item_id in removed_ids:
-                            self.last_item_update_times.pop(item_id, None)
-                            self.last_item_progress.pop(item_id, None)
-                            self.last_item_status.pop(item_id, None)
-                        for item_id, item in filtered_updates.items():
-                            self.last_item_update_times[item_id] = item.get('last_update_time', 0.0)
-                            self.last_item_progress[item_id] = item.get('progress', 0.0)
-                            self.last_item_status[item_id] = item.get('item_status')
-
-                    self.last_emit_time = now
-                    self.last_queue_size = queue_size
-                    self.last_update_time = latest_update
-
-                # Lightweight progress updates for active downloads only.
-                if (now - self.last_progress_emit_time) >= self.progress_emit_interval:
-                    progress_updates = {}
-                    active_ids = set()
-                    for item_id, item in queue_data.items():
-                        if item.get('item_status') != "Downloading":
-                            continue
-                        active_ids.add(item_id)
-                        progress = float(item.get('progress', 0.0))
-                        last_progress = self.last_progress_snapshot.get(item_id)
-                        if last_progress is None or abs(progress - last_progress) >= self.progress_delta_threshold:
-                            progress_updates[item_id] = progress
-
-                    # Cleanup snapshot for items no longer downloading.
-                    for item_id in list(self.last_progress_snapshot.keys()):
-                        if item_id not in active_ids:
-                            self.last_progress_snapshot.pop(item_id, None)
-
-                    if progress_updates:
-                        socketio.emit('progress_update', {"updates": progress_updates}, namespace='/')
-                        for item_id, progress in progress_updates.items():
-                            self.last_progress_snapshot[item_id] = progress
-                        self.last_progress_emit_time = now
+                
+                # Emit queue update to all connected clients
+                socketio.emit('queue_update', queue_data, namespace='/')
                 
             except Exception as e:
                 logger.error(f"Error in WebSocketBroadcaster: {str(e)}")
