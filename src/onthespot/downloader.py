@@ -433,34 +433,32 @@ class DownloadWorker:
                     time.sleep(0.2)
                     continue
 
-                item['item_status'] = "Downloading"
-                self.update_progress(item, "Downloading", 1)
-                
-                logger.info(f"Starting download for track ID: {item_id} from service: {item_service}")
-
-                # Update progress before potentially blocking operations
-                self.update_progress(item, "Downloading", 2)
+                # Get token first (needed for metadata fetch)
                 token = get_account_token(item_service, rotate=config.get("rotate_active_account_number"))
-                # Get account index for failure tracking
                 account_index = self._find_account_index(item_service, token) if token else None
 
+                # FETCH METADATA FIRST (before setting status to Downloading)
+                # This ensures GUI shows real track name when download starts
                 try:
-                    # Fetch metadata (for playlists this is done just-in-time, for albums it may use cache)
-                    album_lock_ctx = None
-                    if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
-                        album_key = f"{item_service}:{item.get('parent_id')}"
-                        with album_download_locks_lock:
-                            if album_key not in album_download_locks:
-                                album_download_locks[album_key] = threading.Lock()
-                            album_lock_ctx = album_download_locks[album_key]
-                    
-                    if album_lock_ctx:
-                        item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
-                    else:
-                        item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
-                    
-                    # Update download_queue with real metadata if this was a minimal playlist item
                     if item.get('needs_metadata_fetch'):
+                        # Lazy fetch for playlist items
+                        logger.info(f"Fetching metadata for playlist track ID: {item_id}")
+                        self.update_progress(item, "Fetching metadata...", 0)
+                        
+                        album_lock_ctx = None
+                        if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                            album_key = f"{item_service}:{item.get('parent_id')}"
+                            with album_download_locks_lock:
+                                if album_key not in album_download_locks:
+                                    album_download_locks[album_key] = threading.Lock()
+                                album_lock_ctx = album_download_locks[album_key]
+                        
+                        if album_lock_ctx:
+                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                        else:
+                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                        
+                        # Update download_queue with real metadata BEFORE starting download
                         with download_queue_lock:
                             if local_id in download_queue:
                                 download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
@@ -473,9 +471,42 @@ class DownloadWorker:
                                 download_queue[local_id]['needs_metadata_fetch'] = False
                                 # Update our local item reference too
                                 item.update(download_queue[local_id])
-                        logger.info(f"Fetched metadata for playlist track: {item_metadata.get('title')} by {item_metadata.get('artists')}")
+                        
+                        logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
+                        # Trigger websocket update with new metadata
+                        self.update_progress(item, "Waiting", 0)
+                    else:
+                        # For albums, metadata is already in the queue
+                        album_lock_ctx = None
+                        if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                            album_key = f"{item_service}:{item.get('parent_id')}"
+                            with album_download_locks_lock:
+                                if album_key not in album_download_locks:
+                                    album_download_locks[album_key] = threading.Lock()
+                                album_lock_ctx = album_download_locks[album_key]
+                        
+                        if album_lock_ctx:
+                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                        else:
+                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                except (Exception, KeyError) as e:
+                    logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
+                    item['item_status'] = "Failed"
+                    self.update_progress(item, "Failed", 0)
+                    increment_failure_count(account_index)
+                    self.readd_item_to_download_queue(item)
+                    continue
 
-                    # album number shim from enumerated items, i hate youtube
+                # NOW set status to Downloading (with real track name in GUI)
+                item['item_status'] = "Downloading"
+                self.update_progress(item, "Downloading", 1)
+                
+                logger.info(f"Starting download for: {item.get('item_name', 'Unknown')} (ID: {item_id})")
+
+                # Update progress before potentially blocking operations
+                self.update_progress(item, "Downloading", 2)
+
+                try:
                     if item_service == 'youtube_music' and item.get('parent_category') == 'album':
                         item_metadata.update({'track_number': item['playlist_number']})
 
