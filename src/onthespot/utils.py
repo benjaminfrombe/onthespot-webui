@@ -939,7 +939,6 @@ def _check_and_write_playlist_m3u(playlist_name, playlist_by, download_queue):
             pending_items = [(item.get('item_id'), item.get('item_status')) for item in playlist_items if item.get('item_status') not in ('Downloaded', 'Already Exists')]
             pending_statuses = [status for _, status in pending_items]
             logger.info(f"Playlist '{playlist_name}' not yet complete. Pending statuses: {set(pending_statuses)}")
-            logger.info(f"Pending items: {pending_items}")
             return False
     
     # All items complete - write M3U from cache
