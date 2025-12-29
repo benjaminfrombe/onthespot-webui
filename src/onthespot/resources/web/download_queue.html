@@ -41,11 +41,10 @@
             opacity: 1;
         }
 
-        /* Progress bar - optimized for 10 Hz websocket updates */
-        .progress-bar-fill {
-            transition: width 0.15s linear;
-            transform: translateZ(0);  /* Force GPU acceleration */
-            will-change: width;
+        /* Status badge fill animation */
+        .status-badge {
+            transition: background-size 0.6s ease-out;
+            will-change: background-size;
         }
 
         /* Image preview popup */
@@ -319,7 +318,6 @@
             max-width: 140px;
             overflow: hidden;
         }
-        .col-progress { width: 15%; min-width: 120px; }
         .col-action { width: 8%; min-width: 60px; text-align: right; }
 
         /* Status badges */
@@ -342,9 +340,7 @@
                         rgba(59, 130, 246, 0.2);
             background-size: 0% 100%, 100% 100%;
             color: #fff;
-            transition: background-size 0.15s linear;
             transform: translateZ(0);  /* Force GPU acceleration */
-            will-change: background-size;
         }
 
         .status-waiting {
@@ -367,33 +363,7 @@
             color: #9ca3af;
         }
 
-        /* Progress bar styling */
-        .progress-container {
-            width: 100%;
-            min-width: 80px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 6px;
-            overflow: hidden;
-            height: 22px;
-            position: relative;
-        }
-
-        .progress-bar-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent) 0%, #66bb6a 100%);
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 600;
-            color: white;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-            transition: width 0.16s linear;
-            will-change: width;
-            transform: translateZ(0); /* GPU hint to smooth width animation */
-            backface-visibility: hidden;
-        }
+        /* Progress bar styling removed (status badge only). */
 
         /* Action button cell */
         .action-cell {
@@ -765,7 +735,6 @@
                             <th class="col-by hide-on-tablet hide-on-mobile" data-sort="item_by">By</th>
                             <th class="col-service hide-on-mobile" data-sort="item_service">Service</th>
                             <th class="col-status" data-sort="item_status">Status</th>
-                            <th class="col-progress hide-on-tablet hide-on-mobile" data-sort="progress" style="display: none;">Progress</th>
                             <th class="col-action">Action</th>
                         </tr>
                     </thead>
@@ -967,90 +936,6 @@
             return hardRestartInProgress && itemStatus === 'Downloading';
         }
 
-        function animateProgressBar(progressBar, targetProgress, reconnecting) {
-            if (!progressBar) return;
-
-            const safeTarget = Math.max(0, Math.min(100, Number(targetProgress) || 0));
-            if (reconnecting) {
-                const label = 'Reconnecting…';
-                progressBar.style.width = `${safeTarget}%`;
-                progressBar.textContent = label;
-                progressBar.dataset.progress = String(safeTarget);
-                const existing = progressSmoothers.get(progressBar);
-                if (existing?.raf) {
-                    cancelAnimationFrame(existing.raf);
-                    existing.raf = null;
-                }
-                return;
-            }
-
-            const now = performance.now();
-            let state = progressSmoothers.get(progressBar);
-            const currentValue = state?.display ?? (parseFloat(progressBar.dataset.progress || progressBar.style.width) || 0);
-
-            if (!state) {
-                state = {
-                    display: currentValue,
-                    target: safeTarget,
-                    rate: 0,
-                    lastUpdate: now,
-                    lastFrame: now,
-                    raf: null
-                };
-                progressSmoothers.set(progressBar, state);
-            }
-
-            const deltaT = (now - state.lastUpdate) / 1000;
-            if (deltaT > 0) {
-                const delta = safeTarget - state.display;
-                const rate = delta / deltaT;
-                if (rate > 0) {
-                    // Use actual rate, no artificial cap
-                    // If download is fast, progress bar should be fast too!
-                    state.rate = rate;
-                }
-            }
-
-            state.target = safeTarget;
-            state.lastUpdate = now;
-
-            const step = (ts) => {
-                const dt = Math.max((ts - state.lastFrame) / 1000, 0);
-                state.lastFrame = ts;
-                const stale = (ts - state.lastUpdate) > STALE_RATE_MS;
-
-                let next;
-                if (!stale && state.rate > 0) {
-                    next = state.display + state.rate * dt;
-                } else {
-                    next = state.display + (state.target - state.display) * 0.2;
-                }
-
-                if (next > state.target) {
-                    next = state.target;
-                }
-
-                state.display = next;
-                progressBar.style.width = `${next}%`;
-                progressBar.textContent = `${next.toFixed(1)}%`;
-                progressBar.dataset.progress = String(next);
-
-                if (state.display + 0.05 < state.target) {
-                    state.raf = requestAnimationFrame(step);
-                } else {
-                    state.display = state.target;
-                    progressBar.style.width = `${state.target}%`;
-                    progressBar.textContent = `${state.target.toFixed(1)}%`;
-                    progressBar.dataset.progress = String(state.target);
-                    state.raf = null;
-                }
-            };
-
-            if (!state.raf) {
-                state.raf = requestAnimationFrame(step);
-            }
-        }
-
         function applyProgressUpdate(localId, progressValue) {
             const item = currentData[localId];
             if (item) {
@@ -1065,11 +950,6 @@
                 statusBadge.style.backgroundSize = `${progressValue}% 100%, 100% 100%`;
             }
 
-            const progressBar = row.querySelector('[data-cell="progress"] .progress-bar-fill');
-            if (progressBar) {
-                const reconnecting = item ? isReconnectingState(item.item_status) : false;
-                animateProgressBar(progressBar, progressValue, reconnecting);
-            }
         }
 
         function updateExistingRows(newData) {
@@ -1114,7 +994,6 @@
                 }
 
                 const statusCell = row.querySelector('[data-cell="status"]');
-                const progressCell = row.querySelector('[data-cell="progress"]');
                 const actionCell = row.querySelector('[data-cell="action"]');
 
                 // Update status badge and progress
@@ -1136,26 +1015,6 @@
                     }
                 }
 
-                // Update progress bar - SIMPLE direct update, CSS transition handles smoothing
-                if (progressCell) {
-                    const newProgress = newItem.progress || 0;
-                    const progressBar = progressCell.querySelector('.progress-bar-fill');
-                    if (progressBar) {
-                        const currentWidth = progressBar.style.width;
-                        const newWidth = `${newProgress}%`;
-                        if (currentWidth !== newWidth) {
-                            progressBar.style.width = newWidth;
-                            progressBar.textContent = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                        }
-                        // If width didn't change but restart state did, still update label
-                        if (currentWidth === newWidth) {
-                            const desiredLabel = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                            if (progressBar.textContent !== desiredLabel) {
-                                progressBar.textContent = desiredLabel;
-                            }
-                        }
-                    }
-                }
             });
         }
 
@@ -1409,20 +1268,6 @@
             const progress = Number(item.progress || 0);
             statusCell.innerHTML = createStatusBadge(item.item_status, progress);
             row.appendChild(statusCell);
-
-            // Progress bar (hidden)
-            const progressCell = document.createElement('td');
-            progressCell.className = 'col-progress hide-on-tablet hide-on-mobile';
-            progressCell.dataset.cell = 'progress';
-            progressCell.style.display = 'none';
-            progressCell.innerHTML = `
-                <div class="progress-container">
-                    <div class="progress-bar-fill" style="width: ${progress}%;">
-                        ${isReconnectingState(item.item_status) ? 'Reconnecting…' : `${progress.toFixed(1)}%`}
-                    </div>
-                </div>
-            `;
-            row.appendChild(progressCell);
 
             // Action buttons
             const actionCell = document.createElement('td');
