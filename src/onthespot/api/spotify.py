@@ -739,7 +739,9 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
         if debug_enabled:
             logger.info(f"[DEBUG FLOW] Calling make_call() for offset={offset}, limit={limit}")
 
-        resp = make_call(url, headers=headers, skip_cache=True)
+        # Use cache for playlists to avoid rate limiting (playlists don't change that often)
+        # First request per session will be cached, subsequent requests use cache
+        resp = make_call(url, headers=headers, skip_cache=False)
         
         if resp is None:
             logger.error(f"Failed to get playlist items for {playlist_id} at offset {offset}")
@@ -803,7 +805,8 @@ def spotify_get_liked_songs(token, _retry=False):
         
         headers['Authorization'] = f"Bearer {token_result}"
 
-        resp = make_call(url, headers=headers, skip_cache=True)
+        # Use cache to avoid rate limiting on repeated requests
+        resp = make_call(url, headers=headers, skip_cache=False)
 
         offset += limit
         items.extend(resp['items'])
@@ -862,7 +865,8 @@ def spotify_get_your_episodes(token, _retry=False):
 
         url = f'{BASE_URL}/me/episodes?offset={offset}&limit={limit}'
 
-        resp = make_call(url, headers=headers, skip_cache=True)
+        # Use cache to avoid rate limiting
+        resp = make_call(url, headers=headers, skip_cache=False)
 
         offset += limit
         items.extend(resp['items'])

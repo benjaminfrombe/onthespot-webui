@@ -49,7 +49,8 @@ batch_queue_processing_lock = Lock()
 batch_queue_processing_start_time = None  # Track when flag was set
 
 # Timeout for batch operations (in seconds)
-BATCH_OPERATION_TIMEOUT = 30
+# Increased to allow Spotify rate limit retries to complete (retry-after can be 40-60s)
+BATCH_OPERATION_TIMEOUT = 90
 
 # Worker management
 worker_threads = []
