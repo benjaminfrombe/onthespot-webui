@@ -707,7 +707,11 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath, _retry=Fal
 
 def spotify_get_playlist_items(token, playlist_id, _retry=False):
     logger.info(f"Getting items in playlist: '{playlist_id}'")
-    if config.get('debug_playlist_flow', False):
+    
+    # Cache debug flag to avoid repeated config.get() calls
+    debug_enabled = config.get('debug_playlist_flow', False)
+    
+    if debug_enabled:
         logger.info(f"[DEBUG FLOW] spotify_get_playlist_items: starting, token type: {type(token)}")
     
     items = []
