@@ -568,23 +568,23 @@ def spotify_get_artist_album_ids(token, artist_id, _retry=False):
 
 def spotify_get_playlist_data(token, playlist_id, _retry=False):
     logger.info(f"Get playlist data for playlist: {playlist_id}")
-    headers = {}
+    
+    # Use app token for playlist data (higher rate limits)
     try:
-        headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
+        headers, auth_source = _spotify_get_public_api_headers(token, "playlist data")
+        logger.info(f"Using {auth_source} token for playlist data")
     except (RuntimeError, OSError) as e:
         if _retry:
             logger.error(f"Failed to get token after retry for playlist {playlist_id}: {e}")
             raise
         logger.warning(f"Token retrieval failed for playlist data, attempting session reconnect: {e}")
-        # Re-initialize the session
         parsing_index = config.get('active_account_number')
         spotify_re_init_session(account_pool[parsing_index])
-        # Get the new token
         new_token = account_pool[parsing_index]['login']['session']
-        # Retry with the new token
         return spotify_get_playlist_data(new_token, playlist_id, _retry=True)
 
-    resp = make_call(f'{BASE_URL}/playlists/{playlist_id}', headers=headers, skip_cache=True)
+    # Enable caching to avoid rate limits on repeated requests
+    resp = make_call(f'{BASE_URL}/playlists/{playlist_id}', headers=headers, skip_cache=False)
     # Get highest quality playlist image (first image is highest quality)
     image_url = ''
     if resp.get('images') and len(resp['images']) > 0:
