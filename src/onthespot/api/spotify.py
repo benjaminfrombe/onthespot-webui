@@ -714,20 +714,44 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
     while True:
         url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}'
         headers = {}
-        try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
-        except (RuntimeError, OSError) as e:
+        
+        # Get token with timeout protection (token.tokens() can hang on dead sessions)
+        token_error = None
+        token_result = None
+        
+        def get_token_with_timeout():
+            nonlocal token_result, token_error
+            try:
+                token_result = token.tokens().get('user-read-email')
+            except Exception as e:
+                token_error = e
+        
+        import threading
+        token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
+        token_thread.start()
+        token_thread.join(timeout=10)  # 10 second timeout for token retrieval
+        
+        if token_thread.is_alive():
+            logger.error(f"Token retrieval hung for playlist items {playlist_id} - session is dead")
             if _retry:
-                logger.error(f"Failed to get token after retry for playlist items {playlist_id}: {e}")
-                raise
-            logger.warning(f"Token retrieval failed for playlist items, attempting session reconnect: {e}")
-            # Re-initialize the session
+                raise RuntimeError("Token retrieval timed out after retry")
+            logger.warning("Attempting session reconnect after token timeout...")
             parsing_index = config.get('active_account_number')
             spotify_re_init_session(account_pool[parsing_index])
-            # Get the new token
             new_token = account_pool[parsing_index]['login']['session']
-            # Retry with the new token
             return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
+        
+        if token_error:
+            if _retry:
+                logger.error(f"Failed to get token after retry for playlist items {playlist_id}: {token_error}")
+                raise token_error
+            logger.warning(f"Token retrieval failed for playlist items, attempting session reconnect: {token_error}")
+            parsing_index = config.get('active_account_number')
+            spotify_re_init_session(account_pool[parsing_index])
+            new_token = account_pool[parsing_index]['login']['session']
+            return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
+        
+        headers['Authorization'] = f"Bearer {token_result}"
 
         resp = make_call(url, headers=headers, skip_cache=True)
         
@@ -754,20 +778,44 @@ def spotify_get_liked_songs(token, _retry=False):
     while True:
         url = f'{BASE_URL}/me/tracks?offset={offset}&limit={limit}'
         headers = {}
-        try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-library-read')}"
-        except (RuntimeError, OSError) as e:
+        
+        # Get token with timeout protection
+        token_error = None
+        token_result = None
+        
+        def get_token_with_timeout():
+            nonlocal token_result, token_error
+            try:
+                token_result = token.tokens().get('user-library-read')
+            except Exception as e:
+                token_error = e
+        
+        import threading
+        token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
+        token_thread.start()
+        token_thread.join(timeout=10)
+        
+        if token_thread.is_alive():
+            logger.error(f"Token retrieval hung for liked songs - session is dead")
             if _retry:
-                logger.error(f"Failed to get token after retry for liked songs: {e}")
-                raise
-            logger.warning(f"Token retrieval failed for liked songs, attempting session reconnect: {e}")
-            # Re-initialize the session
+                raise RuntimeError("Token retrieval timed out after retry")
+            logger.warning("Attempting session reconnect after token timeout...")
             parsing_index = config.get('active_account_number')
             spotify_re_init_session(account_pool[parsing_index])
-            # Get the new token
             new_token = account_pool[parsing_index]['login']['session']
-            # Retry with the new token
             return spotify_get_liked_songs(new_token, _retry=True)
+        
+        if token_error:
+            if _retry:
+                logger.error(f"Failed to get token after retry for liked songs: {token_error}")
+                raise token_error
+            logger.warning(f"Token retrieval failed for liked songs, attempting session reconnect: {token_error}")
+            parsing_index = config.get('active_account_number')
+            spotify_re_init_session(account_pool[parsing_index])
+            new_token = account_pool[parsing_index]['login']['session']
+            return spotify_get_liked_songs(new_token, _retry=True)
+        
+        headers['Authorization'] = f"Bearer {token_result}"
 
         resp = make_call(url, headers=headers, skip_cache=True)
 
@@ -787,20 +835,44 @@ def spotify_get_your_episodes(token, _retry=False):
 
     while True:
         headers = {}
-        try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-library-read')}"
-        except (RuntimeError, OSError) as e:
+        
+        # Get token with timeout protection
+        token_error = None
+        token_result = None
+        
+        def get_token_with_timeout():
+            nonlocal token_result, token_error
+            try:
+                token_result = token.tokens().get('user-library-read')
+            except Exception as e:
+                token_error = e
+        
+        import threading
+        token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
+        token_thread.start()
+        token_thread.join(timeout=10)
+        
+        if token_thread.is_alive():
+            logger.error(f"Token retrieval hung for your episodes - session is dead")
             if _retry:
-                logger.error(f"Failed to get token after retry for your episodes: {e}")
-                raise
-            logger.warning(f"Token retrieval failed for your episodes, attempting session reconnect: {e}")
-            # Re-initialize the session
+                raise RuntimeError("Token retrieval timed out after retry")
+            logger.warning("Attempting session reconnect after token timeout...")
             parsing_index = config.get('active_account_number')
             spotify_re_init_session(account_pool[parsing_index])
-            # Get the new token
             new_token = account_pool[parsing_index]['login']['session']
-            # Retry with the new token
             return spotify_get_your_episodes(new_token, _retry=True)
+        
+        if token_error:
+            if _retry:
+                logger.error(f"Failed to get token after retry for your episodes: {token_error}")
+                raise token_error
+            logger.warning(f"Token retrieval failed for your episodes, attempting session reconnect: {token_error}")
+            parsing_index = config.get('active_account_number')
+            spotify_re_init_session(account_pool[parsing_index])
+            new_token = account_pool[parsing_index]['login']['session']
+            return spotify_get_your_episodes(new_token, _retry=True)
+        
+        headers['Authorization'] = f"Bearer {token_result}"
 
         url = f'{BASE_URL}/me/episodes?offset={offset}&limit={limit}'
 
