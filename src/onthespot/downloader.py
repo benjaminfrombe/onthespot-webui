@@ -160,8 +160,22 @@ class DownloadWorker:
 
 
     def update_progress(self, item, status, progress_value):
-        """Update progress for web interface - updates both item and download_queue"""
+        """Update progress for web interface - updates both item and download_queue
+        
+        Throttled to reduce lock contention with WebSocketBroadcaster.
+        Only updates if progress changed by 1% or status changed.
+        """
         local_id = item.get('local_id')
+        
+        # Check if update is needed (throttle to reduce lock contention)
+        current_progress = item.get('progress', 0)
+        current_status = item.get('item_status', '')
+        
+        # Skip update if progress changed by less than 1% and status unchanged
+        if (status == current_status and 
+            abs(progress_value - current_progress) < 1 and 
+            progress_value != 0 and progress_value != 100):
+            return
         
         # Update local item dict
         item['progress'] = progress_value
