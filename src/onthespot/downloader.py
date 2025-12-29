@@ -160,12 +160,21 @@ class DownloadWorker:
 
 
     def update_progress(self, item, status, progress_value):
-        """Update progress for web interface"""
-        # Always update the item's progress for web interface
+        """Update progress for web interface - updates both item and download_queue"""
+        local_id = item.get('local_id')
+        
+        # Update local item dict
         item['progress'] = progress_value
         item['item_status'] = status
-        # Track last update time for watchdog
         item['last_update_time'] = time.time()
+        
+        # Also update in download_queue to ensure websocket broadcasts it
+        if local_id:
+            with download_queue_lock:
+                if local_id in download_queue:
+                    download_queue[local_id]['progress'] = progress_value
+                    download_queue[local_id]['item_status'] = status
+                    download_queue[local_id]['last_update_time'] = time.time()
 
 
     def yt_dlp_progress_hook(self, item, d):
@@ -469,12 +478,17 @@ class DownloadWorker:
                                 download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
                                 download_queue[local_id]['track_number'] = item_metadata.get('track_number')
                                 download_queue[local_id]['needs_metadata_fetch'] = False
+                                download_queue[local_id]['item_status'] = 'Waiting'  # Trigger websocket update
+                                download_queue[local_id]['progress'] = 0
+                                download_queue[local_id]['last_update_time'] = time.time()
                                 # Update our local item reference too
                                 item.update(download_queue[local_id])
                         
                         logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
-                        # Trigger websocket update with new metadata
+                        # Update status to Waiting to trigger websocket broadcast with new metadata
                         self.update_progress(item, "Waiting", 0)
+                        # Small delay to ensure websocket broadcasts the metadata update before we start downloading
+                        time.sleep(0.1)
                     else:
                         # For albums, metadata is already in the queue
                         album_lock_ctx = None
@@ -498,7 +512,6 @@ class DownloadWorker:
                     continue
 
                 # NOW set status to Downloading (with real track name in GUI)
-                item['item_status'] = "Downloading"
                 self.update_progress(item, "Downloading", 1)
                 
                 logger.info(f"Starting download for: {item.get('item_name', 'Unknown')} (ID: {item_id})")
