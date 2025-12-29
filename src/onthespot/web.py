@@ -169,12 +169,16 @@ class QueueWorker(threading.Thread):
                 if is_parsing:
                     with pending_lock:
                         pending_count = len(pending)
-                    logger.info(f"QueueWorker waiting: batch parse in progress, {pending_count} items in pending queue")
-                    _debug_log(f"Waiting for batch parse to complete, {pending_count} items pending")
+                    # Only log occasionally when waiting to reduce spam
+                    if pending_count > 0:
+                        logger.info(f"QueueWorker waiting: batch parse in progress, {pending_count} items in pending queue")
                     time.sleep(0.5)
                     continue
                 
-                _debug_log(f"Checking pending queue, current size: {len(pending)}")
+                # Don't spam logs when queue is empty
+                if not pending:
+                    time.sleep(0.2)
+                    continue
                 
                 if pending:
                     # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
