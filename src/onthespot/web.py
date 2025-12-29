@@ -510,10 +510,13 @@ class WebSocketBroadcaster(threading.Thread):
         self.is_running = True
         self.daemon = True
         self.min_emit_interval = 0.2  # Throttle emits to reduce network churn
+        self.progress_threshold = 1.0  # Only send progress updates when >= 1%
         self.last_emit_time = 0.0
         self.last_queue_size = 0
         self.last_update_time = 0.0
         self.last_item_update_times = {}
+        self.last_item_progress = {}
+        self.last_item_status = {}
         self.full_sync_interval = 30.0
         self.last_full_sync = 0.0
 
@@ -559,17 +562,49 @@ class WebSocketBroadcaster(threading.Thread):
                             item_id: item.get('last_update_time', 0.0)
                             for item_id, item in queue_data.items()
                         }
+                        self.last_item_progress = {
+                            item_id: item.get('progress', 0.0)
+                            for item_id, item in queue_data.items()
+                        }
+                        self.last_item_status = {
+                            item_id: item.get('item_status')
+                            for item_id, item in queue_data.items()
+                        }
                         self.last_full_sync = now
                     elif updated_items or removed_ids:
+                        filtered_updates = {}
+                        for item_id, item in updated_items.items():
+                            status = item.get('item_status')
+                            progress = item.get('progress', 0.0)
+                            last_progress = self.last_item_progress.get(item_id, 0.0)
+                            last_status = self.last_item_status.get(item_id)
+
+                            if status != last_status:
+                                filtered_updates[item_id] = item
+                                continue
+
+                            if status == "Downloading":
+                                if abs(progress - last_progress) >= self.progress_threshold:
+                                    filtered_updates[item_id] = item
+                            else:
+                                filtered_updates[item_id] = item
+
+                        if not filtered_updates and not removed_ids:
+                            continue
+
                         socketio.emit(
                             'queue_update',
-                            {"full": False, "updated": updated_items, "removed": removed_ids},
+                            {"full": False, "updated": filtered_updates, "removed": removed_ids},
                             namespace='/'
                         )
                         for item_id in removed_ids:
                             self.last_item_update_times.pop(item_id, None)
-                        for item_id, item in updated_items.items():
+                            self.last_item_progress.pop(item_id, None)
+                            self.last_item_status.pop(item_id, None)
+                        for item_id, item in filtered_updates.items():
                             self.last_item_update_times[item_id] = item.get('last_update_time', 0.0)
+                            self.last_item_progress[item_id] = item.get('progress', 0.0)
+                            self.last_item_status[item_id] = item.get('item_status')
 
                     self.last_emit_time = now
                     self.last_queue_size = queue_size

@@ -41,9 +41,9 @@
             opacity: 1;
         }
 
-        /* Progress bar - faster transition to match 30 Hz broadcasts */
+        /* Progress bar - JS interpolation keeps motion smooth */
         .progress-bar-fill {
-            transition: width 0.1s ease-out;
+            transition: none;
             will-change: width;  /* GPU acceleration */
         }
 
@@ -813,6 +813,8 @@
         let fetchInterval = 500;
         let filtersVisible = false;
         let lastRenderedIds = [];
+        const PROGRESS_INTERPOLATION_MS = 700;
+        const progressAnimations = new Map();
 
         // ============= UI FUNCTIONS =============
         function toggleFilters() {
@@ -965,6 +967,61 @@
             return hardRestartInProgress && itemStatus === 'Downloading';
         }
 
+        function animateProgressBar(progressBar, targetProgress, reconnecting) {
+            if (!progressBar) return;
+
+            const safeTarget = Math.max(0, Math.min(100, Number(targetProgress) || 0));
+            if (reconnecting) {
+                const label = 'Reconnecting…';
+                progressBar.style.width = `${safeTarget}%`;
+                progressBar.textContent = label;
+                progressBar.dataset.progress = String(safeTarget);
+                const existing = progressAnimations.get(progressBar);
+                if (existing) {
+                    cancelAnimationFrame(existing);
+                    progressAnimations.delete(progressBar);
+                }
+                return;
+            }
+
+            const currentValue = parseFloat(progressBar.dataset.progress || progressBar.style.width) || 0;
+            if (Math.abs(safeTarget - currentValue) < 0.01) {
+                progressBar.style.width = `${safeTarget}%`;
+                progressBar.textContent = `${safeTarget.toFixed(1)}%`;
+                progressBar.dataset.progress = String(safeTarget);
+                return;
+            }
+
+            const existing = progressAnimations.get(progressBar);
+            if (existing) {
+                cancelAnimationFrame(existing);
+                progressAnimations.delete(progressBar);
+            }
+
+            const start = performance.now();
+            const from = currentValue;
+            const to = safeTarget;
+
+            const step = (now) => {
+                const elapsed = now - start;
+                const t = Math.min(elapsed / PROGRESS_INTERPOLATION_MS, 1);
+                const eased = 1 - Math.pow(1 - t, 3);
+                const value = from + (to - from) * eased;
+
+                progressBar.style.width = `${value}%`;
+                progressBar.textContent = `${value.toFixed(1)}%`;
+                progressBar.dataset.progress = String(value);
+
+                if (t < 1) {
+                    progressAnimations.set(progressBar, requestAnimationFrame(step));
+                } else {
+                    progressAnimations.delete(progressBar);
+                }
+            };
+
+            progressAnimations.set(progressBar, requestAnimationFrame(step));
+        }
+
         function updateExistingRows(newData) {
             const tableBody = document.getElementById('download-queue-table');
             const rows = tableBody.querySelectorAll('tr');
@@ -1034,19 +1091,8 @@
                     const newProgress = newItem.progress || 0;
                     const progressBar = progressCell.querySelector('.progress-bar-fill');
                     if (progressBar) {
-                        const currentWidth = progressBar.style.width;
-                        const newWidth = `${newProgress}%`;
-                        if (currentWidth !== newWidth) {
-                            progressBar.style.width = newWidth;
-                            progressBar.textContent = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                        }
-                        // If width didn't change but restart state did, still update label.
-                        if (currentWidth === newWidth) {
-                            const desiredLabel = isReconnectingState(newItem.item_status) ? 'Reconnecting…' : newWidth;
-                            if (progressBar.textContent !== desiredLabel) {
-                                progressBar.textContent = desiredLabel;
-                            }
-                        }
+                        const reconnecting = isReconnectingState(newItem.item_status);
+                        animateProgressBar(progressBar, newProgress, reconnecting);
                     }
                 }
             });
