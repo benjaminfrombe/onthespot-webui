@@ -253,48 +253,9 @@ def parsingworker():
                                         item_type = track_obj.get('type', 'track')
                                         local_id = format_local_id(item_id)
                                         
-                                        # Prefer metadata already present in playlist response to avoid extra API calls.
-                                        track_title = track_obj.get('name') or f'Track {index + 1}'
-                                        artists_list = [a.get('name') for a in track_obj.get('artists', []) if a.get('name')]
-                                        artists = conv_list_format(artists_list)
-                                        album_obj = track_obj.get('album') or {}
-                                        album_name = album_obj.get('name', '')
-                                        album_artists_list = [a.get('name') for a in album_obj.get('artists', []) if a.get('name')]
-                                        album_artists = conv_list_format(album_artists_list) or artists
-                                        album_images = album_obj.get('images') or []
-                                        image_url = album_images[0].get('url', '') if album_images else ''
-                                        release_date = album_obj.get('release_date', '')
-                                        release_year = release_date.split('-')[0] if release_date else ''
-                                        album_type = album_obj.get('album_type') or 'single'
-                                        total_tracks = album_obj.get('total_tracks') or 1
-                                        disc_number = track_obj.get('disc_number') or 1
-                                        track_number = track_obj.get('track_number') or (index + 1)
-                                        isrc = track_obj.get('external_ids', {}).get('isrc')
+                                        # Keep playlist entries minimal; fetch full metadata right before download.
+                                        track_title = f'Track {index + 1}'
                                         item_url = track_obj.get('external_urls', {}).get('spotify', '')
-                                        explicit = track_obj.get('explicit', False)
-
-                                        cached_metadata = {
-                                            'item_id': item_id,
-                                            'title': track_title,
-                                            'artists': artists,
-                                            'album_name': album_name,
-                                            'album_artists': album_artists,
-                                            'album_type': album_type,
-                                            'image_url': image_url,
-                                            'release_year': release_year,
-                                            'track_number': track_number,
-                                            'total_tracks': total_tracks,
-                                            'disc_number': disc_number,
-                                            'total_discs': 1,
-                                            'genre': '',
-                                            'label': '',
-                                            'copyright': '',
-                                            'explicit': explicit,
-                                            'isrc': isrc,
-                                            'length': str(track_obj.get('duration_ms') or ''),
-                                            'is_playable': track_obj.get('is_playable', True),
-                                            'item_url': item_url,
-                                        }
 
                                         # Add to download_queue with cached metadata from playlist response.
                                         download_queue[local_id] = {
@@ -306,18 +267,17 @@ def parsingworker():
                                             'item_status': 'Waiting',
                                             'file_path': None,
                                             'item_name': track_title,
-                                            'item_by': artists,
+                                            'item_by': '',
                                             'parent_category': 'playlist',
                                             'playlist_name': playlist_name,
                                             'playlist_by': playlist_by,
                                             'playlist_number': str(index + 1),
                                             'playlist_total': total_items,
-                                            'item_thumbnail': image_url or playlist_image_url,
+                                            'item_thumbnail': playlist_image_url or '',
                                             'item_url': item_url,
                                             'progress': 0,
                                             'last_update_time': time.time(),
-                                            'needs_metadata_fetch': False,
-                                            'cached_metadata': cached_metadata,
+                                            'needs_metadata_fetch': True,
                                         }
                                         added_count += 1
                                         
