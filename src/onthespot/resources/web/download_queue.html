@@ -799,6 +799,7 @@
         let fetchInterval = 500;
         let filtersVisible = false;
         let lastRenderedIds = [];
+        let lastOverallProgress = 0;
 
         // ============= UI FUNCTIONS =============
         function toggleFilters() {
@@ -1364,9 +1365,13 @@
             let total = 0;
             let completed = 0;
             let totalProgress = 0;
+            let hasFailure = false;
             
             Object.values(currentData).forEach(item => {
                 total++;
+                if (item.item_status === 'Failed' || item.item_status === 'Unavailable') {
+                    hasFailure = true;
+                }
                 
                 // Count completed items
                 if (['Downloaded', 'Already Exists', 'Cancelled'].includes(item.item_status)) {
@@ -1404,9 +1409,17 @@
             });
             
             const completedPercent = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
-            const overallProgress = total > 0 ? (totalProgress / total).toFixed(1) : 0;
+            let overallProgress = total > 0 ? (totalProgress / total) : 0;
+            if (total === 0) {
+                lastOverallProgress = 0;
+            } else if (!hasFailure && overallProgress < lastOverallProgress) {
+                overallProgress = lastOverallProgress;
+            } else if (hasFailure || overallProgress > lastOverallProgress) {
+                lastOverallProgress = overallProgress;
+            }
+            const overallProgressDisplay = overallProgress.toFixed(1);
             
-            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${overallProgress}%`;
+            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${overallProgressDisplay}%`;
             
             // Update global progress bar fill based on actual download progress
             const statusBar = document.querySelector('.status-bar');
