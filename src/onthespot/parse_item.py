@@ -255,6 +255,8 @@ def parsingworker():
                                         
                                         # Keep playlist entries minimal; fetch full metadata right before download.
                                         track_title = track_obj.get('name') or f'Track {index + 1}'
+                                        artists_list = [a.get('name') for a in track_obj.get('artists', []) if a.get('name')]
+                                        artists = conv_list_format(artists_list)
                                         item_url = track_obj.get('external_urls', {}).get('spotify', '')
 
                                         # Add to download_queue with cached metadata from playlist response.
@@ -267,7 +269,7 @@ def parsingworker():
                                             'item_status': 'Waiting',
                                             'file_path': None,
                                             'item_name': track_title,
-                                            'item_by': '',
+                                            'item_by': artists,
                                             'parent_category': 'playlist',
                                             'playlist_name': playlist_name,
                                             'playlist_by': playlist_by,
