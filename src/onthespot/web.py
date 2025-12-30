@@ -224,6 +224,48 @@ class QueueWorker(threading.Thread):
                                     _debug_log(f"Extracted metadata from cache: {item_metadata.get('title', 'Unknown')}")
                                     logger.debug(f"Using cached track data for {local_id} - skipped API call!")
                                 else:
+                                    if item.get('parent_category') == 'playlist':
+                                        # Keep playlist restores minimal to avoid API bursts on restart.
+                                        _debug_log(f"No cached data for {local_id}, keeping minimal metadata")
+                                        item_metadata = {
+                                            "title": f"Track {item.get('playlist_number', '?')}",
+                                            "artists": "",
+                                            "item_url": item.get('item_url', ""),
+                                            "image_url": item.get('item_thumbnail', ""),
+                                            "album_name": item.get('album_name', ""),
+                                            "track_number": item.get('playlist_number', 1),
+                                            "total_tracks": item.get('playlist_total', 1),
+                                        }
+                                        playlist_total = item.get('playlist_total')
+                                        with download_queue_lock:
+                                            download_queue[local_id] = {
+                                                'local_id': local_id,
+                                                'available': True,
+                                                "item_service": item["item_service"],
+                                                "item_type": item["item_type"],
+                                                'item_id': item['item_id'],
+                                                'item_status': 'Waiting',
+                                                "file_path": None,
+                                                "item_name": item_metadata["title"],
+                                                "item_by": item_metadata.get("artists", ""),
+                                                'parent_category': item.get('parent_category'),
+                                                'playlist_name': item.get('playlist_name'),
+                                                'playlist_by': item.get('playlist_by'),
+                                                'playlist_number': item.get('playlist_number'),
+                                                'playlist_total': playlist_total,
+                                                'track_number': item_metadata.get('track_number'),
+                                                'album_name': item_metadata.get('album_name'),
+                                                'item_album_name': item_metadata.get('album_name'),
+                                                'item_thumbnail': item_metadata.get("image_url", ""),
+                                                'item_url': item_metadata.get("item_url", ""),
+                                                'progress': 0,
+                                                'last_update_time': time.time(),
+                                                'needs_metadata_fetch': True,
+                                            }
+                                            processed_successfully += 1
+                                            _debug_log(f"Added {local_id} minimal playlist entry to download_queue, total queue size: {len(download_queue)}")
+                                        continue
+
                                     # Slow path: Fetch metadata via API
                                     _debug_log(f"No cached data for {local_id}, fetching via API")
                                     token = get_account_token(item['item_service'])
