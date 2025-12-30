@@ -299,16 +299,16 @@ class DownloadWorker:
                                    any(x in error_str for x in ['Bad file descriptor', 'Cannot get alternative track',
                                                                  'Unable to', 'Failed fetching audio key']))
 
-                        if is_retryable:
-                            if 'Cannot get alternative track' in error_str:
-                                alternative_track_unavailable = True
-                            if attempt < max_retries_per_account - 1:
-                                logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {current_account_idx}, reconnecting session: {e}")
-                                self.update_progress(item, "Reconnecting", item.get('progress', 0))
-                                try:
-                                    # Force reconnection to fix stream issues immediately
-                                    spotify_re_init_session(account_pool[current_account_idx], force=True)
-                                    token = account_pool[current_account_idx]['login']['session']
+                    if is_retryable:
+                        if 'Cannot get alternative track' in error_str:
+                            alternative_track_unavailable = True
+                        if attempt < max_retries_per_account - 1:
+                            logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {current_account_idx}, reconnecting session: {e}")
+                            self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                            try:
+                                # Force reconnection to fix stream issues immediately
+                                spotify_re_init_session(account_pool[current_account_idx], force=True)
+                                token = account_pool[current_account_idx]['login']['session']
                                 # Refresh quality check with new token
                                 if token.get_user_attribute("type") == "premium" and item_type == 'track':
                                     quality = AudioQuality.VERY_HIGH
@@ -513,10 +513,10 @@ class DownloadWorker:
                                     download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
                                     download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
                                     download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
-                                download_queue[local_id]['track_number'] = item_metadata.get('track_number')
-                                download_queue[local_id]['needs_metadata_fetch'] = False
-                                download_queue[local_id].pop('metadata_retry_at', None)
-                                download_queue[local_id]['item_status'] = 'Waiting'  # Trigger websocket update
+                                    download_queue[local_id]['track_number'] = item_metadata.get('track_number')
+                                    download_queue[local_id]['needs_metadata_fetch'] = False
+                                    download_queue[local_id].pop('metadata_retry_at', None)
+                                    download_queue[local_id]['item_status'] = 'Waiting'  # Trigger websocket update
                                     download_queue[local_id]['progress'] = 0
                                     download_queue[local_id]['last_update_time'] = time.time()
                                     # Update our local item reference too
