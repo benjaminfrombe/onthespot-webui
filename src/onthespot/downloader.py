@@ -1506,6 +1506,12 @@ class DownloadWorker:
 
                 except RuntimeError as e:
                     error_str = str(e).lower()
+                    if "audio key error" in error_str and "code: 2" in error_str:
+                        logger.error(f"Track is unavailable (audio key error code 2), track id '{item_id}'")
+                        item['item_status'] = 'Unavailable'
+                        self.update_progress(item, "Unavailable", 0)
+                        self.readd_item_to_download_queue(item)
+                        continue
                     if "cannot get alternative track" in error_str:
                         logger.error(f"Track is unavailable, track id '{item_id}'")
                         item['item_status'] = 'Unavailable'
