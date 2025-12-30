@@ -1662,6 +1662,13 @@ class DownloadWorker:
                 continue
             except Exception as e:
                 error_str = str(e).lower()
+                if "audio key error" in error_str and "code: 2" in error_str:
+                    logger.error(f"Track is unavailable (audio key error code 2), track id '{item_id}'")
+                    item['item_status'] = 'Unavailable'
+                    self.update_progress(item, "Unavailable", 0)
+                    self.readd_item_to_download_queue(item)
+                    time.sleep(config.get("download_delay"))
+                    continue
                 # Session/auth errors are more serious - count them more heavily
                 is_session_error = any(x in error_str for x in [
                     'session', 'auth', 'failed to load audio stream', 
