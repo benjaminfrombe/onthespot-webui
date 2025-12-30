@@ -52,10 +52,11 @@
             position: absolute;
             inset: 0;
             background: linear-gradient(to right, #1e3a8a 0%, rgba(59, 130, 246, 0.6) 100%);
-            transform: scaleX(var(--progress, 0));
+            transform: translateZ(0) scaleX(var(--progress, 0));
             transform-origin: left center;
-            transition: transform 1.6s cubic-bezier(0.22, 1, 0.36, 1);
+            transition: transform 0s;
             will-change: transform;
+            backface-visibility: hidden;
             z-index: 0;
         }
 
@@ -950,6 +951,43 @@
             return hardRestartInProgress && itemStatus === 'Downloading';
         }
 
+        const progressAnimations = new Map();
+
+        function getBadgeProgress(badge) {
+            const raw = badge.style.getPropertyValue('--progress');
+            const parsed = Number(raw);
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+
+        function animateBadgeProgress(localId, badge, progressValue) {
+            const target = Math.max(0, Math.min(1, progressValue / 100));
+            const state = progressAnimations.get(localId) || { current: getBadgeProgress(badge), target: target, raf: null };
+            state.target = target;
+
+            if (state.raf) {
+                progressAnimations.set(localId, state);
+                return;
+            }
+
+            const tick = () => {
+                state.current += (state.target - state.current) * 0.18;
+                if (Math.abs(state.target - state.current) < 0.001) {
+                    state.current = state.target;
+                }
+                badge.style.setProperty('--progress', state.current.toFixed(4));
+                if (state.current === state.target) {
+                    state.raf = null;
+                    progressAnimations.set(localId, state);
+                    return;
+                }
+                state.raf = requestAnimationFrame(tick);
+                progressAnimations.set(localId, state);
+            };
+
+            state.raf = requestAnimationFrame(tick);
+            progressAnimations.set(localId, state);
+        }
+
         function applyProgressUpdate(localId, progressValue) {
             const item = currentData[localId];
             if (item) {
@@ -961,7 +999,7 @@
 
             const statusBadge = row.querySelector('[data-cell="status"] .status-badge');
             if (statusBadge && (!item || item.item_status === 'Downloading')) {
-                statusBadge.style.setProperty('--progress', (progressValue / 100).toFixed(4));
+                animateBadgeProgress(localId, statusBadge, progressValue);
             }
 
         }
@@ -1024,7 +1062,7 @@
                             actionCell.innerHTML = createActionButtons(newItem);
                         }
                     } else if (newItem.item_status === 'Downloading' && statusBadge) {
-                        statusBadge.style.setProperty('--progress', (newProgress / 100).toFixed(4));
+                        animateBadgeProgress(localId, statusBadge, newProgress);
                     }
                 }
 
