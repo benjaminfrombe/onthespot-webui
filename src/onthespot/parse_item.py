@@ -14,7 +14,7 @@ from .api.generic import generic_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_show_episode_ids
 from .runtimedata import account_pool, get_logger, parsing, download_queue, pending, parsing_lock, pending_lock, download_queue_lock
 import onthespot.runtimedata as runtimedata
-from .utils import format_local_id
+from .utils import format_local_id, conv_list_format
 from .otsconfig import config
 
 logger = get_logger('parse_item')
@@ -253,8 +253,49 @@ def parsingworker():
                                         item_type = track_obj.get('type', 'track')
                                         local_id = format_local_id(item_id)
                                         
-                                        # Add to download_queue with MINIMAL info
-                                        # Metadata will be fetched just-in-time by DownloadWorker
+                                        # Prefer metadata already present in playlist response to avoid extra API calls.
+                                        track_title = track_obj.get('name') or f'Track {index + 1}'
+                                        artists_list = [a.get('name') for a in track_obj.get('artists', []) if a.get('name')]
+                                        artists = conv_list_format(artists_list)
+                                        album_obj = track_obj.get('album') or {}
+                                        album_name = album_obj.get('name', '')
+                                        album_artists_list = [a.get('name') for a in album_obj.get('artists', []) if a.get('name')]
+                                        album_artists = conv_list_format(album_artists_list) or artists
+                                        album_images = album_obj.get('images') or []
+                                        image_url = album_images[0].get('url', '') if album_images else ''
+                                        release_date = album_obj.get('release_date', '')
+                                        release_year = release_date.split('-')[0] if release_date else ''
+                                        album_type = album_obj.get('album_type') or 'single'
+                                        total_tracks = album_obj.get('total_tracks') or 1
+                                        disc_number = track_obj.get('disc_number') or 1
+                                        track_number = track_obj.get('track_number') or (index + 1)
+                                        isrc = track_obj.get('external_ids', {}).get('isrc')
+                                        item_url = track_obj.get('external_urls', {}).get('spotify', '')
+                                        explicit = track_obj.get('explicit', False)
+
+                                        cached_metadata = {
+                                            'item_id': item_id,
+                                            'title': track_title,
+                                            'artists': artists,
+                                            'album_name': album_name,
+                                            'album_artists': album_artists,
+                                            'album_type': album_type,
+                                            'image_url': image_url,
+                                            'release_year': release_year,
+                                            'track_number': track_number,
+                                            'total_tracks': total_tracks,
+                                            'disc_number': disc_number,
+                                            'total_discs': 1,
+                                            'genre': '',
+                                            'label': '',
+                                            'copyright': '',
+                                            'explicit': explicit,
+                                            'isrc': isrc,
+                                            'length': str(track_obj.get('duration_ms') or ''),
+                                            'item_url': item_url,
+                                        }
+
+                                        # Add to download_queue with cached metadata from playlist response.
                                         download_queue[local_id] = {
                                             'local_id': local_id,
                                             'available': True,
@@ -263,18 +304,19 @@ def parsingworker():
                                             'item_id': item_id,
                                             'item_status': 'Waiting',
                                             'file_path': None,
-                                            'item_name': f'Track {index + 1}',  # Placeholder, will be updated
-                                            'item_by': '',  # Will be fetched during download
+                                            'item_name': track_title,
+                                            'item_by': artists,
                                             'parent_category': 'playlist',
                                             'playlist_name': playlist_name,
                                             'playlist_by': playlist_by,
                                             'playlist_number': str(index + 1),
                                             'playlist_total': total_items,
-                                            'item_thumbnail': playlist_image_url,  # Use playlist cover as placeholder
-                                            'item_url': '',  # Will be fetched during download
+                                            'item_thumbnail': image_url or playlist_image_url,
+                                            'item_url': item_url,
                                             'progress': 0,
                                             'last_update_time': time.time(),
-                                            'needs_metadata_fetch': True  # Flag for DownloadWorker
+                                            'needs_metadata_fetch': False,
+                                            'cached_metadata': cached_metadata,
                                         }
                                         added_count += 1
                                         
