@@ -23,6 +23,91 @@ _album_track_ids_cache_lock = threading.Lock()
 # Cache for Spotify Web API client-credentials token
 _spotify_app_token = {"access_token": None, "expires_at": 0}
 _spotify_app_token_lock = threading.Lock()
+_spotify_app_token_cred_index = -1
+
+
+def _normalize_spotify_client_credentials(raw_credentials):
+    normalized = []
+    if not isinstance(raw_credentials, list):
+        return normalized
+    for entry in raw_credentials:
+        if not isinstance(entry, dict):
+            continue
+        client_id = (entry.get("clientId") or entry.get("client_id") or "").strip()
+        client_secret = (entry.get("clientSecret") or entry.get("client_secret") or "").strip()
+        if client_id and client_secret:
+            normalized.append(
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "source": "config_list",
+                }
+            )
+    return normalized
+
+
+def _load_spotify_client_credentials():
+    env_client_id = os.environ.get("ONTHESPOT_SPOTIFY_CLIENT_ID", "").strip()
+    env_client_secret = os.environ.get("ONTHESPOT_SPOTIFY_CLIENT_SECRET", "").strip()
+    if env_client_id or env_client_secret:
+        if not env_client_id or not env_client_secret:
+            logger.info("Spotify app creds missing in env; both client ID and secret are required.")
+            return []
+        return [
+            {
+                "client_id": env_client_id,
+                "client_secret": env_client_secret,
+                "source": "env",
+            }
+        ]
+
+    cfg_credentials = _normalize_spotify_client_credentials(
+        config.get("spotify_client_credentials", [])
+    )
+    if cfg_credentials:
+        return cfg_credentials
+
+    cfg_client_id = config.get("spotify_client_id", "").strip()
+    cfg_client_secret = config.get("spotify_client_secret", "").strip()
+    if cfg_client_id and cfg_client_secret:
+        return [
+            {
+                "client_id": cfg_client_id,
+                "client_secret": cfg_client_secret,
+                "source": "config_single",
+            }
+        ]
+    return []
+
+
+def _remove_spotify_client_credential(client_id, client_secret):
+    credentials = config.get("spotify_client_credentials", [])
+    if not isinstance(credentials, list):
+        return False
+
+    def _matches(entry):
+        if not isinstance(entry, dict):
+            return False
+        entry_id = (entry.get("clientId") or entry.get("client_id") or "").strip()
+        entry_secret = (entry.get("clientSecret") or entry.get("client_secret") or "").strip()
+        return entry_id == client_id and entry_secret == client_secret
+
+    filtered = [entry for entry in credentials if not _matches(entry)]
+    if len(filtered) == len(credentials):
+        return False
+
+    config.set("spotify_client_credentials", filtered)
+    config.save()
+    logger.warning("Removed invalid Spotify client credential ending with %s.", _mask_value(client_id))
+    return True
+
+
+def _select_next_spotify_credential(credentials):
+    global _spotify_app_token_cred_index
+    if not credentials:
+        return None
+    _spotify_app_token_cred_index = (_spotify_app_token_cred_index + 1) % len(credentials)
+    return credentials[_spotify_app_token_cred_index]
 
 
 def _mask_value(value, visible=6):
@@ -33,78 +118,158 @@ def _mask_value(value, visible=6):
     return f"...{value[-visible:]}"
 
 
-def _spotify_get_app_access_token():
-    env_client_id = os.environ.get("ONTHESPOT_SPOTIFY_CLIENT_ID", "").strip()
-    env_client_secret = os.environ.get("ONTHESPOT_SPOTIFY_CLIENT_SECRET", "").strip()
-    cfg_client_id = config.get("spotify_client_id", "").strip()
-    cfg_client_secret = config.get("spotify_client_secret", "").strip()
-    client_id = env_client_id or cfg_client_id
-    client_secret = env_client_secret or cfg_client_secret
-    id_source = "env" if env_client_id else ("config" if cfg_client_id else "missing")
-    secret_source = "env" if env_client_secret else ("config" if cfg_client_secret else "missing")
-    logger.info(
-        "Spotify app creds status: client_id=%s (%s) client_secret=%s (%s)",
-        _mask_value(client_id),
-        id_source,
-        "set" if client_secret else "missing",
-        secret_source,
-    )
-    if not client_id or not client_secret:
+def _spotify_get_app_access_token(force_rotate=False):
+    global _spotify_app_token_cred_index
+    credentials = _load_spotify_client_credentials()
+    if not credentials:
         logger.info("Spotify app creds missing; skipping client-credentials token.")
         return None
 
     now = time.time()
+    max_retry_after = config.get("api_retry_max_retry_after", 10)
+    default_delay = config.get("api_retry_default_delay", 1)
+
     with _spotify_app_token_lock:
-        if _spotify_app_token["access_token"] and _spotify_app_token["expires_at"] > now + 30:
+        if (
+            not force_rotate
+            and _spotify_app_token["access_token"]
+            and _spotify_app_token["expires_at"] > now + 30
+        ):
             ttl = int(_spotify_app_token["expires_at"] - now)
             logger.info("Spotify app token cache hit (ttl=%ss).", ttl)
             return _spotify_app_token["access_token"]
 
-        logger.info(
-            "Requesting Spotify app token with client_id=%s secret=%s",
-            _mask_value(client_id),
-            "set" if client_secret else "missing",
-        )
-        try:
-            resp = requests.post(
-                "https://accounts.spotify.com/api/token",
-                data={"grant_type": "client_credentials"},
-                auth=(client_id, client_secret),
-                timeout=10,
-            )
-        except requests.RequestException as e:
-            logger.error("Spotify app token request failed: %s", e)
-            return None
+        attempts = 0
+        while credentials and attempts < len(credentials):
+            cred = _select_next_spotify_credential(credentials)
+            if cred is None:
+                break
 
-        if resp.status_code != 200:
+            client_id = cred["client_id"]
+            client_secret = cred["client_secret"]
+            logger.info(
+                "Requesting Spotify app token with client_id=%s",
+                _mask_value(client_id),
+            )
+            try:
+                resp = requests.post(
+                    "https://accounts.spotify.com/api/token",
+                    data={"grant_type": "client_credentials"},
+                    auth=(client_id, client_secret),
+                    timeout=10,
+                )
+            except requests.RequestException as e:
+                logger.error("Spotify app token request failed: %s", e)
+                attempts += 1
+                continue
+
+            if resp.status_code == 200:
+                data = resp.json()
+                access_token = data.get("access_token")
+                expires_in = int(data.get("expires_in", 0))
+                if not access_token:
+                    logger.error("Spotify app token response missing access_token.")
+                    attempts += 1
+                    continue
+
+                _spotify_app_token["access_token"] = access_token
+                _spotify_app_token["expires_at"] = now + expires_in
+                logger.info("Spotify app token refreshed (expires_in=%ss).", expires_in)
+                return access_token
+
+            if resp.status_code in (400, 401) and "invalid_client" in resp.text:
+                if cred.get("source") == "config_list":
+                    if _remove_spotify_client_credential(client_id, client_secret):
+                        credentials = [
+                            entry
+                            for entry in credentials
+                            if entry.get("client_id") != client_id
+                        ]
+                        attempts = 0
+                        if _spotify_app_token_cred_index >= len(credentials):
+                            _spotify_app_token_cred_index = -1
+                        continue
+                logger.error(
+                    "Spotify app token request invalid credentials for client_id=%s",
+                    _mask_value(client_id),
+                )
+                attempts += 1
+                continue
+
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    wait_seconds = (
+                        int(retry_after) if retry_after is not None else default_delay
+                    )
+                except ValueError:
+                    wait_seconds = default_delay
+                if wait_seconds > max_retry_after and len(credentials) <= 1:
+                    logger.warning(
+                        "Spotify app token rate limited with Retry-After=%ss; exceeds max %ss.",
+                        wait_seconds,
+                        max_retry_after,
+                    )
+                    return None
+                logger.warning(
+                    "Spotify app token rate limited (Retry-After=%ss). Rotating credentials.",
+                    wait_seconds,
+                )
+                attempts += 1
+                if len(credentials) <= 1:
+                    time.sleep(max(0, wait_seconds))
+                continue
+
             logger.error(
                 "Spotify app token request error: %s - %s",
                 resp.status_code,
                 resp.text,
             )
-            return None
+            attempts += 1
 
-        data = resp.json()
-        access_token = data.get("access_token")
-        expires_in = int(data.get("expires_in", 0))
-        if not access_token:
-            logger.error("Spotify app token response missing access_token.")
-            return None
-
-        _spotify_app_token["access_token"] = access_token
-        _spotify_app_token["expires_at"] = now + expires_in
-        logger.info("Spotify app token refreshed (expires_in=%ss).", expires_in)
-        return access_token
+    return None
 
 
-def _spotify_get_public_api_headers(token, context):
-    app_token = _spotify_get_app_access_token()
+def _spotify_get_public_api_headers(token, context, force_rotate=False):
+    app_token = _spotify_get_app_access_token(force_rotate=force_rotate)
     if app_token:
         logger.info("Spotify %s using app token.", context)
         return {"Authorization": f"Bearer {app_token}"}, "app"
 
     logger.info("Spotify %s using session token.", context)
     return {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}, "session"
+
+
+def _spotify_make_call_with_headers(
+    url,
+    token,
+    context,
+    headers,
+    auth_source,
+    params=None,
+    skip_cache=False,
+    text=False,
+    use_ssl=False,
+):
+    refresh_headers = None
+    if auth_source == "app":
+        def refresh_headers():
+            new_headers, new_source = _spotify_get_public_api_headers(
+                token, context, force_rotate=True
+            )
+            if new_source != "app":
+                return None
+            return new_headers
+
+    return make_call(
+        url,
+        params=params,
+        headers=headers,
+        skip_cache=skip_cache,
+        text=text,
+        use_ssl=use_ssl,
+        refresh_headers=refresh_headers,
+    )
 
 
 def _spotify_extract_year(value):
@@ -119,7 +284,7 @@ def _spotify_extract_year(value):
         return None
 
 
-def spotify_get_playlist_updated_year(headers, playlist_id, tracks_total):
+def spotify_get_playlist_updated_year(token, headers, auth_source, playlist_id, tracks_total, context):
     """Get playlist last modified year based on most recently added track.
     
     Optimized: Only fetches the LAST track's added_at (1 API call instead of 2).
@@ -129,14 +294,17 @@ def spotify_get_playlist_updated_year(headers, playlist_id, tracks_total):
         return None
 
     # Fetch only the LAST track (most recent addition)
-    resp = make_call(
+    resp = _spotify_make_call_with_headers(
         f"{BASE_URL}/playlists/{playlist_id}/tracks",
+        token,
+        context,
+        headers,
+        auth_source,
         params={
             'offset': str(max(0, tracks_total - 1)),
             'limit': '1',
             'fields': 'items(added_at)'
         },
-        headers=headers,
         skip_cache=False,  # Cache this to avoid repeated calls for same playlist
     )
     
@@ -541,7 +709,13 @@ def spotify_get_artist_album_ids(token, artist_id, _retry=False):
             return spotify_get_artist_album_ids(new_token, artist_id, _retry=True)
 
         url = f'{BASE_URL}/artists/{artist_id}/albums?include_groups=album%2Csingle&limit={limit}&offset={offset}' #%2Cappears_on%2Ccompilation
-        artist_data = make_call(url, headers=headers)
+        artist_data = _spotify_make_call_with_headers(
+            url,
+            token,
+            "artist albums",
+            headers,
+            auth_source,
+        )
         if artist_data is None:
             logger.error("Spotify artist albums request failed (%s) for %s", auth_source, artist_id)
             return []
@@ -576,7 +750,14 @@ def spotify_get_playlist_data(token, playlist_id, _retry=False):
         return spotify_get_playlist_data(new_token, playlist_id, _retry=True)
 
     # Enable caching to avoid rate limits on repeated requests
-    resp = make_call(f'{BASE_URL}/playlists/{playlist_id}', headers=headers, skip_cache=False)
+    resp = _spotify_make_call_with_headers(
+        f'{BASE_URL}/playlists/{playlist_id}',
+        token,
+        "playlist data",
+        headers,
+        auth_source,
+        skip_cache=False,
+    )
     # Get highest quality playlist image (first image is highest quality)
     image_url = ''
     if resp.get('images') and len(resp['images']) > 0:
@@ -737,7 +918,14 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
 
         # Use cache for playlists to avoid rate limiting (playlists don't change that often)
         # First request per session will be cached, subsequent requests use cache
-        resp = make_call(url, headers=headers, skip_cache=False)
+        resp = _spotify_make_call_with_headers(
+            url,
+            token,
+            "playlist items",
+            headers,
+            auth_source,
+            skip_cache=False,
+        )
         
         if resp is None:
             logger.error(f"Failed to get playlist items for {playlist_id} at offset {offset}")
@@ -903,7 +1091,14 @@ def spotify_get_album_track_ids(token, album_id, _retry=False):
             # Retry with the new token
             return spotify_get_album_track_ids(new_token, album_id, _retry=True)
 
-        resp = make_call(url, headers=headers, skip_cache=True)
+        resp = _spotify_make_call_with_headers(
+            url,
+            token,
+            "album tracks",
+            headers,
+            auth_source,
+            skip_cache=True,
+        )
         if resp is None:
             logger.error("Spotify album tracks request failed (%s) for %s", auth_source, album_id)
             return []
@@ -953,7 +1148,13 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
         return spotify_get_album_tracks_with_metadata(new_token, album_id, _retry=True)
     
     # Get full album data (includes album-level metadata)
-    album_data = make_call(f'{BASE_URL}/albums/{album_id}', headers=headers)
+    album_data = _spotify_make_call_with_headers(
+        f'{BASE_URL}/albums/{album_id}',
+        token,
+        "album metadata",
+        headers,
+        auth_source,
+    )
     if not album_data:
         logger.error("Failed to get album data for %s", album_id)
         return []
@@ -961,7 +1162,14 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
     # Get all tracks from album
     while True:
         url = f'{BASE_URL}/albums/{album_id}/tracks?offset={offset}&limit={limit}'
-        resp = make_call(url, headers=headers, skip_cache=True)
+        resp = _spotify_make_call_with_headers(
+            url,
+            token,
+            "album metadata",
+            headers,
+            auth_source,
+            skip_cache=True,
+        )
         if resp is None:
             logger.error("Spotify album tracks request failed for %s", album_id)
             break
@@ -995,31 +1203,21 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
 
     headers = {}
     auth_source = "session"
-    app_token = _spotify_get_app_access_token()
-    if app_token:
-        headers['Authorization'] = f"Bearer {app_token}"
-        auth_source = "app"
-        logger.info("Spotify search using app token.")
-    else:
+    try:
+        headers, auth_source = _spotify_get_public_api_headers(token, "search")
+    except (RuntimeError, OSError, ConnectionError, Exception) as e:
+        if _retry:
+            logger.error(f"Failed to get token after retry: {e}")
+            raise
+        logger.warning(f"Token retrieval failed, attempting session reconnect: {e}")
         try:
-            headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
-            logger.info("Spotify search using session token.")
-        except (RuntimeError, OSError, ConnectionError, Exception) as e:
-            if _retry:
-                logger.error(f"Failed to get token after retry: {e}")
-                raise
-            logger.warning(f"Token retrieval failed, attempting session reconnect: {e}")
-            try:
-                # Re-initialize the session with retry logic
-                parsing_index = config.get('active_account_number')
-                spotify_re_init_session(account_pool[parsing_index])
-                # Get the new token
-                new_token = account_pool[parsing_index]['login']['session']
-                # Retry the search with the new token
-                return spotify_get_search_results(new_token, search_term, content_types, _retry=True)
-            except Exception as reconnect_error:
-                logger.error(f"Failed to reconnect and search: {reconnect_error}")
-                raise
+            parsing_index = config.get('active_account_number')
+            spotify_re_init_session(account_pool[parsing_index])
+            new_token = account_pool[parsing_index]['login']['session']
+            return spotify_get_search_results(new_token, search_term, content_types, _retry=True)
+        except Exception as reconnect_error:
+            logger.error(f"Failed to reconnect and search: {reconnect_error}")
+            raise
 
     params = {}
     params['limit'] = config.get("max_search_results")
@@ -1033,25 +1231,17 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
         params['limit'],
     )
 
-    response = requests.get(f"{BASE_URL}/search", params=params, headers=headers, timeout=10)
-    logger.info("Spotify search response status=%s auth_source=%s", response.status_code, auth_source)
-    if response.status_code == 429:
-        retry_after = response.headers.get("Retry-After")
-        if retry_after:
-            logger.error(f"Spotify rate limit exceeded ({auth_source}). Retry after {retry_after}s.")
-        else:
-            logger.error(f"Spotify rate limit exceeded ({auth_source}). Please try again later.")
-        return {
-            "error": "Spotify rate limit exceeded.",
-            "retry_after": retry_after,
-        }
-    if response.status_code != 200:
-        logger.error(f"Spotify search failed ({auth_source}): {response.status_code} - {response.text}")
-        return []
-    try:
-        data = response.json()
-    except ValueError as e:
-        logger.error(f"Spotify search response JSON error: {e}; status {response.status_code} - {response.text}")
+    data = _spotify_make_call_with_headers(
+        f"{BASE_URL}/search",
+        token,
+        "search",
+        headers,
+        auth_source,
+        params=params,
+        skip_cache=True,
+    )
+    if data is None:
+        logger.error("Spotify search failed (auth_source=%s).", auth_source)
         return []
     if isinstance(data, dict) and data.get("error"):
         logger.error(f"Spotify search error payload: {data.get('error')}")
@@ -1090,7 +1280,14 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
                         if playlist_id in playlist_year_cache:
                             rel_year = playlist_year_cache[playlist_id]
                         else:
-                            rel_year = spotify_get_playlist_updated_year(headers, playlist_id, tracks_total)
+                            rel_year = spotify_get_playlist_updated_year(
+                                token,
+                                headers,
+                                auth_source,
+                                playlist_id,
+                                tracks_total,
+                                "search",
+                            )
                             playlist_year_cache[playlist_id] = rel_year
                         item_name = f"[Y:{rel_year or '????'}] [T:{tracks_total}] {item['name']}"
                     else:
@@ -1157,8 +1354,9 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
     logger.info(f"Get item by ID: {item_type}/{item_id}")
 
     headers = {}
+    auth_source = "session"
     try:
-        headers['Authorization'] = f"Bearer {token.tokens().get('user-read-email')}"
+        headers, auth_source = _spotify_get_public_api_headers(token, "item by id")
     except (RuntimeError, OSError, ConnectionError, Exception) as e:
         if _retry:
             logger.error(f"Failed to get token after retry for item {item_type}/{item_id}: {e}")
@@ -1182,16 +1380,17 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
 
     try:
         # Fetch item data from Spotify API
-        response = requests.get(
+        item = _spotify_make_call_with_headers(
             f"{BASE_URL}/{endpoint_type}s/{item_id}",
-            headers=headers,
-            timeout=10
+            token,
+            "item by id",
+            headers,
+            auth_source,
+            skip_cache=True,
         )
-        if response.status_code != 200:
-            logger.error(f"Failed to fetch {item_type} {item_id}: {response.status_code} - {response.text}")
+        if not item:
+            logger.error("Failed to fetch %s %s (%s)", item_type, item_id, auth_source)
             return []
-
-        item = response.json()
 
         # Format the result based on item type (same as search results)
         if item_type == "track":
@@ -1206,7 +1405,14 @@ def spotify_get_item_by_id(token, item_id, item_type, _retry=False):
         elif item_type == "playlist":
             tracks_total = item.get('tracks', {}).get('total')
             if isinstance(tracks_total, int):
-                rel_year = spotify_get_playlist_updated_year(headers, item['id'], tracks_total)
+                rel_year = spotify_get_playlist_updated_year(
+                    token,
+                    headers,
+                    auth_source,
+                    item['id'],
+                    tracks_total,
+                    "item by id",
+                )
                 item_name = f"[Y:{rel_year or '????'}] [T:{tracks_total}] {item['name']}"
             else:
                 item_name = f"{item['name']}"
@@ -1331,14 +1537,32 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
 
     if auth_source == "session":
         market_param = "from_token"
-        track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market={market_param}', headers=headers)
+        track_data = _spotify_make_call_with_headers(
+            f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
+            token,
+            "track metadata",
+            headers,
+            auth_source,
+        )
     else:
         market_param = "EU"
-        track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market={market_param}', headers=headers)
+        track_data = _spotify_make_call_with_headers(
+            f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
+            token,
+            "track metadata",
+            headers,
+            auth_source,
+        )
         if not track_data or track_data.get('tracks', [{}])[0].get('is_playable') is False:
             logger.info("Spotify track metadata EU unavailable for %s; falling back to US", item_id)
             market_param = "US"
-            track_data = make_call(f'{BASE_URL}/tracks?ids={item_id}&market={market_param}', headers=headers)
+            track_data = _spotify_make_call_with_headers(
+                f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
+                token,
+                "track metadata",
+                headers,
+                auth_source,
+            )
     if not track_data:
         logger.error(
             "Spotify track metadata request failed (%s, market=%s) for %s",
@@ -1347,8 +1571,20 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
             item_id,
         )
         return {}
-    album_data = make_call(f"{BASE_URL}/albums/{track_data.get('tracks', [])[0].get('album', {}).get('id')}", headers=headers)
-    artist_data = make_call(f"{BASE_URL}/artists/{track_data.get('tracks', [])[0].get('artists', [])[0].get('id')}", headers=headers)
+    album_data = _spotify_make_call_with_headers(
+        f"{BASE_URL}/albums/{track_data.get('tracks', [])[0].get('album', {}).get('id')}",
+        token,
+        "track metadata",
+        headers,
+        auth_source,
+    )
+    artist_data = _spotify_make_call_with_headers(
+        f"{BASE_URL}/artists/{track_data.get('tracks', [])[0].get('artists', [])[0].get('id')}",
+        token,
+        "track metadata",
+        headers,
+        auth_source,
+    )
     
     # Lock ONLY the album track ID fetch (critical section for duplicate prevention)
     if album_lock:
@@ -1359,7 +1595,13 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
         if album_lock:
             album_lock.release()
     try:
-        track_audio_data = make_call(f'{BASE_URL}/audio-features/{item_id}', headers=headers)
+        track_audio_data = _spotify_make_call_with_headers(
+            f'{BASE_URL}/audio-features/{item_id}',
+            token,
+            "track metadata",
+            headers,
+            auth_source,
+        )
     except Exception:
         track_audio_data = ''
     session_headers = None

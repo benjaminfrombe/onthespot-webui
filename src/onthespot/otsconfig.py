@@ -124,6 +124,7 @@ class Config:
             # Spotify Settings
             "spotify_client_id": "", # Spotify Web API client ID (optional, for search)
             "spotify_client_secret": "", # Spotify Web API client secret (optional, for search)
+            "spotify_client_credentials": [], # Spotify Web API app credentials (rotated for client-credentials)
 
             # Search Settings
             "enable_search_tracks": True, # Enable listed category in search

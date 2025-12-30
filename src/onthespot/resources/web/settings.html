@@ -148,7 +148,8 @@
 
         .setting-row input[type="text"],
         .setting-row input[type="password"],
-        .setting-row input[type="number"] {
+        .setting-row input[type="number"],
+        .setting-row textarea {
             width: 200px;
             max-width: 50%;
             padding: 8px 12px;
@@ -162,7 +163,8 @@
 
         .setting-row input[type="text"]:focus,
         .setting-row input[type="password"]:focus,
-        .setting-row input[type="number"]:focus {
+        .setting-row input[type="number"]:focus,
+        .setting-row textarea:focus {
             outline: none;
             border-color: #1db954;
             box-shadow: 0 0 0 3px rgba(29, 185, 84, 0.2);
@@ -408,7 +410,8 @@
 
             .setting-row input[type="text"],
             .setting-row input[type="password"],
-            .setting-row input[type="number"] {
+            .setting-row input[type="number"],
+            .setting-row textarea {
                 width: 120px;
                 max-width: 45%;
                 padding: 6px 10px;
@@ -446,7 +449,8 @@
 
             .setting-row input[type="text"],
             .setting-row input[type="password"],
-            .setting-row input[type="number"] {
+            .setting-row input[type="number"],
+            .setting-row textarea {
                 width: 100px;
                 max-width: 40%;
             }
@@ -724,6 +728,11 @@
                     <label for="spotify_client_secret">Spotify Client Secret</label>
                     <input type="password" id="spotify_client_secret" value="{{ config.spotify_client_secret }}" placeholder="Enter your client secret">
                     <small>Env overrides: ONTHESPOT_SPOTIFY_CLIENT_ID / ONTHESPOT_SPOTIFY_CLIENT_SECRET.</small>
+                </div>
+                <div class="setting-row">
+                    <label for="spotify_client_credentials">Spotify Client Credentials (JSON)</label>
+                    <textarea id="spotify_client_credentials" rows="6" placeholder='[{"clientId":"...","clientSecret":"..."}]'></textarea>
+                    <small>Rotated for app token requests. Leave empty to use single ID/secret.</small>
                 </div>
                 <div class="setting-row">
                     <label for="check_for_updates">Check for Updates</label>
@@ -1313,7 +1322,21 @@
             }
 
             // Save settings
-            updateSettings(returnSettingsData());
+            let settingsData;
+            try {
+                settingsData = returnSettingsData();
+            } catch (error) {
+                saveButton.disabled = false;
+                saveButton.classList.remove('button-loading');
+                if (buttonSpan) {
+                    buttonSpan.textContent = originalText;
+                } else {
+                    saveButton.textContent = originalText;
+                }
+                showToast(error.message || 'Failed to parse settings.', 'error');
+                return;
+            }
+            updateSettings(settingsData);
 
             // Show success feedback after a short delay
             setTimeout(() => {
@@ -1339,6 +1362,16 @@
                     }
                 }, 1000);
             }, 500);
+        }
+
+        function readSpotifyClientCredentials() {
+            const raw = document.getElementById('spotify_client_credentials').value.trim();
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) {
+                throw new Error('Spotify client credentials must be a JSON array.');
+            }
+            return parsed;
         }
 
         function returnSettingsData() {
@@ -1369,6 +1402,7 @@
                 mirror_spotify_playback: document.getElementById('mirror_spotify_playback').checked,
                 spotify_client_id: document.getElementById('spotify_client_id').value,
                 spotify_client_secret: document.getElementById('spotify_client_secret').value,
+                spotify_client_credentials: readSpotifyClientCredentials(),
                 close_to_tray: document.getElementById('close_to_tray').checked,
                 check_for_updates: document.getElementById('check_for_updates').checked,
                 illegal_character_replacement: document.getElementById('illegal_character_replacement').value,
@@ -1529,6 +1563,12 @@
             if (!confirm('Remove this account?')) return;
             fetch('/api/remove_account/' + uuid, { method: 'DELETE' })
             .then(r => { if (r.ok) { alert('Account removed! Please restart.'); location.reload(); } });
+        }
+
+        const spotifyClientCredentialsField = document.getElementById('spotify_client_credentials');
+        if (spotifyClientCredentialsField) {
+            const spotifyClientCredentials = {{ config.spotify_client_credentials | tojson }};
+            spotifyClientCredentialsField.value = JSON.stringify(spotifyClientCredentials || [], null, 2);
         }
 
         handleServiceChange();

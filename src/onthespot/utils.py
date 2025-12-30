@@ -29,7 +29,7 @@ class SSLAdapter(requests.adapters.HTTPAdapter):
         return super().init_poolmanager(*args, ssl_context=context, **kwargs)
 
 
-def make_call(url, params=None, headers=None, session=None, skip_cache=False, text=False, use_ssl=False):
+def make_call(url, params=None, headers=None, session=None, skip_cache=False, text=False, use_ssl=False, refresh_headers=None):
     if not skip_cache:
         request_key = md5(f'{url}'.encode()).hexdigest()
         req_cache_file = os.path.join(config.get('_cache_dir'), 'reqcache', request_key + '.json')
@@ -91,6 +91,14 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
                 wait_seconds = int(retry_after) if retry_after is not None else default_delay
             except ValueError:
                 wait_seconds = default_delay
+            if refresh_headers is not None:
+                new_headers = refresh_headers()
+                if new_headers:
+                    headers = new_headers
+                    logger.warning(
+                        f"Rate limited (429) for {url}; rotated credentials and retrying immediately."
+                    )
+                    continue
             if wait_seconds > max_retry_after:
                 logger.warning(
                     f"Rate limited (429) for {url} with Retry-After={wait_seconds}s; "
