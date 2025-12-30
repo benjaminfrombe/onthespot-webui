@@ -553,18 +553,57 @@ class WebSocketBroadcaster(threading.Thread):
         super().__init__()
         self.is_running = True
         self.daemon = True
+        self._last_snapshot = {}
+        self._last_progress = {}
+
+    def _snapshot_item(self, item):
+        """Return a snapshot for diffing that ignores volatile fields."""
+        if not isinstance(item, dict):
+            return item
+        return {k: v for k, v in item.items() if k not in ("progress", "last_update_time")}
 
     def run(self):
         logger.info('WebSocketBroadcaster started')
         while self.is_running:
             try:
-                time.sleep(0.1)  # Broadcast 10 times per second
-                
+                time.sleep(0.5)  # Throttle to reduce bandwidth
+
                 with download_queue_lock:
                     queue_data = dict(download_queue)
-                
-                # Emit queue update to all connected clients
-                socketio.emit('queue_update', queue_data, namespace='/')
+
+                removed = [key for key in self._last_snapshot.keys() if key not in queue_data]
+                updated = {}
+                progress_updates = {}
+                new_snapshot = {}
+                new_progress = {}
+
+                for local_id, item in queue_data.items():
+                    snapshot = self._snapshot_item(item)
+                    new_snapshot[local_id] = snapshot
+
+                    if local_id not in self._last_snapshot or self._last_snapshot[local_id] != snapshot:
+                        updated[local_id] = item
+
+                    progress_value = item.get("progress")
+                    if progress_value is not None:
+                        new_progress[local_id] = progress_value
+                        prev_progress = self._last_progress.get(local_id)
+                        if prev_progress is None or progress_value != prev_progress:
+                            progress_updates[local_id] = progress_value
+
+                # Avoid sending progress updates for items we already send fully.
+                for local_id in list(progress_updates.keys()):
+                    if local_id in updated:
+                        progress_updates.pop(local_id, None)
+
+                if updated or removed:
+                    socketio.emit('queue_update', {'updated': updated, 'removed': removed}, namespace='/')
+
+                if progress_updates:
+                    socketio.emit('progress_update', {'updates': progress_updates}, namespace='/')
+
+                self._last_snapshot = new_snapshot
+                self._last_progress = new_progress
                 
             except Exception as e:
                 logger.error(f"Error in WebSocketBroadcaster: {str(e)}")
