@@ -38,10 +38,29 @@ from .runtimedata import get_logger, account_pool, pending, download_queue, down
 from . import runtimedata
 from .search import get_search_results
 from .utils import format_bytes
-
 logger = get_logger("web")
 _restart_lock = threading.Lock()
 _restart_in_progress = False
+
+
+def _load_config_data():
+    config_path = os.path.join(config_dir(), 'otsconfig.json')
+    for attempt in range(3):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as config_file:
+                return json.load(config_file)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Config JSON decode failed (attempt %s/3): %s",
+                attempt + 1,
+                e,
+            )
+            time.sleep(0.1)
+        except FileNotFoundError as e:
+            logger.warning("Config file missing: %s", e)
+            break
+    logger.warning("Falling back to in-memory config after read failure.")
+    return config._Config__config.copy()
 
 
 def _cache_download_queue_to_disk():
@@ -736,18 +755,14 @@ def index():
 @app.route('/search')
 @login_required
 def search():
-    config_path = os.path.join(config_dir(), 'otsconfig.json')
-    with open(config_path, 'r') as config_file:
-        config_data = json.load(config_file)
+    config_data = _load_config_data()
     return render_template('search.html', config=config_data, user=current_user)
 
 
 @app.route('/download_queue')
 @login_required
 def download_queue_page():
-    config_path = os.path.join(config_dir(), 'otsconfig.json')
-    with open(config_path, 'r') as config_file:
-        config_data = json.load(config_file)
+    config_data = _load_config_data()
     if socketio.async_mode == "threading":
         socketio_transports = ["polling"]
     else:
@@ -758,9 +773,7 @@ def download_queue_page():
 @app.route('/settings')
 @admin_required
 def settings():
-    config_path = os.path.join(config_dir(), 'otsconfig.json')
-    with open(config_path, 'r') as config_file:
-        config_data = json.load(config_file)
+    config_data = _load_config_data()
     return render_template('settings.html', config=config_data, account_pool=account_pool)
 
 
