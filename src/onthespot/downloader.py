@@ -346,6 +346,7 @@ class DownloadWorker:
         
         max_retries_per_account = 2
         alternative_track_unavailable = False
+        audio_key_unavailable = False
         
         # Try current account first
         if current_account_idx is not None and current_account_idx not in tried_accounts:
@@ -367,6 +368,7 @@ class DownloadWorker:
                     if is_retryable:
                         if 'audio key error' in error_str and 'code: 2' in error_str:
                             alternative_track_unavailable = True
+                            audio_key_unavailable = True
                             raise RuntimeError("Cannot get alternative track")
                         if 'Cannot get alternative track' in error_str:
                             alternative_track_unavailable = True
@@ -423,10 +425,11 @@ class DownloadWorker:
                                        any(x in error_str for x in ['Bad file descriptor', 'Cannot get alternative track',
                                                                      'Unable to', 'Failed fetching audio key']))
 
-                        if is_retryable:
-                            if 'audio key error' in error_str and 'code: 2' in error_str:
-                                alternative_track_unavailable = True
-                                raise RuntimeError("Cannot get alternative track")
+                    if is_retryable:
+                        if 'audio key error' in error_str and 'code: 2' in error_str:
+                            alternative_track_unavailable = True
+                            audio_key_unavailable = True
+                            raise RuntimeError("Cannot get alternative track")
                             if 'Cannot get alternative track' in error_str:
                                 alternative_track_unavailable = True
                             if attempt < max_retries_per_account - 1:
@@ -446,11 +449,14 @@ class DownloadWorker:
                         else:
                             raise
             except Exception as e:
+                error_str = str(e).lower()
+                if "audio key error" in error_str and "code: 2" in error_str:
+                    audio_key_unavailable = True
                 logger.error(f"Fallback account {account_idx} failed completely: {e}")
                 continue
         
         # All accounts exhausted
-        if alternative_track_unavailable:
+        if alternative_track_unavailable or audio_key_unavailable:
             raise RuntimeError("Cannot get alternative track")
         raise RuntimeError(f"Failed to load audio stream after trying {len(tried_accounts)} account(s)")
 
