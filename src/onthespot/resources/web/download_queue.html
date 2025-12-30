@@ -1360,8 +1360,6 @@
         }
 
         // ============= PROGRESS HEADER =============
-        let maxProgressAchieved = 0; // Track highest progress to prevent regression
-        
         function updateProgressHeader() {
             let total = 0;
             let completed = 0;
@@ -1408,17 +1406,12 @@
             const completedPercent = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
             const overallProgress = total > 0 ? (totalProgress / total).toFixed(1) : 0;
             
-            // Only allow progress to increase, never decrease
-            if (parseFloat(overallProgress) > maxProgressAchieved) {
-                maxProgressAchieved = parseFloat(overallProgress);
-            }
-            
-            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${maxProgressAchieved.toFixed(1)}%`;
+            document.getElementById('queue-status-message').textContent = `${completed}/${total} completed • ${overallProgress}%`;
             
             // Update global progress bar fill based on actual download progress
             const statusBar = document.querySelector('.status-bar');
             if (statusBar) {
-                statusBar.style.setProperty('--progress', (maxProgressAchieved / 100).toFixed(4));
+                statusBar.style.setProperty('--progress', (Number(overallProgress) / 100).toFixed(4));
             }
         }
 
