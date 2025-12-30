@@ -428,7 +428,7 @@ class DownloadWorker:
                             # Priority: album_name, track_number, then insertion order
                             available_items = [
                                 (local_id, item) for local_id, item in download_queue.items()
-                                if item['available'] and item['item_status'] == 'Waiting'
+                                if item['available'] and item['item_status'] in ('Waiting', 'Reconnecting')
                                 and item.get('metadata_retry_at', 0) <= time.time()
                             ]
                             
@@ -553,8 +553,12 @@ class DownloadWorker:
                             continue
                         logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                         cooldown = config.get("metadata_retry_cooldown", 30)
-                        item['metadata_retry_at'] = time.time() + cooldown
-                        item['item_status'] = "Waiting"
+                        retry_at = time.time() + cooldown
+                        item['metadata_retry_at'] = retry_at
+                        item['item_status'] = "Reconnecting"
+                        with download_queue_lock:
+                            if local_id in download_queue:
+                                download_queue[local_id]['metadata_retry_at'] = retry_at
                         self.update_progress(item, "Reconnecting", 0)
                         self.readd_item_to_download_queue(item)
                         metadata_failed = True
