@@ -735,6 +735,11 @@
                     <small>Rotated for app token requests. Leave empty to use single ID/secret.</small>
                 </div>
                 <div class="setting-row">
+                    <label for="spotify_client_backoff_seconds">Spotify Client Backoff (seconds)</label>
+                    <input type="number" id="spotify_client_backoff_seconds" value="{{ config.spotify_client_backoff_seconds }}">
+                    <small>Cooldown applied to a client ID after rate limit (429).</small>
+                </div>
+                <div class="setting-row">
                     <label for="check_for_updates">Check for Updates</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="check_for_updates" {% if config.check_for_updates %}checked{% endif %}>
@@ -1403,6 +1408,7 @@
                 spotify_client_id: document.getElementById('spotify_client_id').value,
                 spotify_client_secret: document.getElementById('spotify_client_secret').value,
                 spotify_client_credentials: readSpotifyClientCredentials(),
+                spotify_client_backoff_seconds: document.getElementById('spotify_client_backoff_seconds').value,
                 close_to_tray: document.getElementById('close_to_tray').checked,
                 check_for_updates: document.getElementById('check_for_updates').checked,
                 illegal_character_replacement: document.getElementById('illegal_character_replacement').value,

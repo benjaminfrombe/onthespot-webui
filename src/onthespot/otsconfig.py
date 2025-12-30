@@ -120,6 +120,7 @@ class Config:
             "download_stall_timeout": 5, # Seconds of no progress before reconnecting and restarting download
             "api_retry_max_attempts": 3, # Max retries on API rate limit (429)
             "api_retry_default_delay": 1, # Default delay (seconds) when Retry-After is missing
+            "spotify_client_backoff_seconds": 3600, # Cooldown (seconds) for rate-limited Spotify app credentials
 
             # Spotify Settings
             "spotify_client_id": "", # Spotify Web API client ID (optional, for search)

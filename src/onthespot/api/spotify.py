@@ -139,9 +139,11 @@ def _is_spotify_credential_rate_limited(client_id, now=None):
         return True
 
 
-def _backoff_spotify_credential(client_id, seconds=3600):
+def _backoff_spotify_credential(client_id, seconds=None):
     if not client_id:
         return
+    if seconds is None:
+        seconds = int(config.get("spotify_client_backoff_seconds", 3600))
     until = time.time() + seconds
     with _spotify_app_credential_backoff_lock:
         _spotify_app_credential_backoff[client_id] = until
@@ -251,7 +253,7 @@ def _spotify_get_app_access_token(force_rotate=False):
                     "Spotify app token rate limited (Retry-After=%ss). Rotating credentials.",
                     wait_seconds,
                 )
-                _backoff_spotify_credential(client_id, seconds=3600)
+                _backoff_spotify_credential(client_id)
                 attempts += 1
                 if len(credentials) <= 1:
                     time.sleep(max(0, wait_seconds))
@@ -292,7 +294,7 @@ def _spotify_make_call_with_headers(
     if auth_source == "app":
         current_client_id = _spotify_app_token.get("client_id")
         def refresh_headers():
-            _backoff_spotify_credential(current_client_id, seconds=3600)
+            _backoff_spotify_credential(current_client_id)
             new_headers, new_source = _spotify_get_public_api_headers(
                 token, context, force_rotate=True
             )
