@@ -566,7 +566,7 @@ class WebSocketBroadcaster(threading.Thread):
         logger.info('WebSocketBroadcaster started')
         while self.is_running:
             try:
-                time.sleep(0.5)  # Throttle to reduce bandwidth
+                time.sleep(0.125)  # Throttle to reduce bandwidth
 
                 with download_queue_lock:
                     queue_data = dict(download_queue)
