@@ -59,6 +59,8 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
     default_delay = config.get('api_retry_default_delay', 1)
     request_timeout = 30  # 30 second timeout for API calls
 
+    max_retry_after = config.get('api_retry_max_retry_after', 10)
+
     for attempt in range(max_attempts):
         try:
             response = session.get(url, headers=headers, params=params, timeout=request_timeout)
@@ -89,6 +91,12 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
                 wait_seconds = int(retry_after) if retry_after is not None else default_delay
             except ValueError:
                 wait_seconds = default_delay
+            if wait_seconds > max_retry_after:
+                logger.warning(
+                    f"Rate limited (429) for {url} with Retry-After={wait_seconds}s; "
+                    f"exceeds max {max_retry_after}s, aborting call to avoid long stall."
+                )
+                return None
             logger.warning(
                 f"Rate limited (429) for {url}. Retrying in {wait_seconds}s "
                 f"(attempt {attempt + 1}/{max_attempts})."

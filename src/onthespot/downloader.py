@@ -299,15 +299,16 @@ class DownloadWorker:
                                    any(x in error_str for x in ['Bad file descriptor', 'Cannot get alternative track',
                                                                  'Unable to', 'Failed fetching audio key']))
 
-                    if is_retryable:
-                        if 'Cannot get alternative track' in error_str:
-                            alternative_track_unavailable = True
-                        if attempt < max_retries_per_account - 1:
-                            logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {current_account_idx}, reconnecting session: {e}")
-                            try:
-                                # Force reconnection to fix stream issues immediately
-                                spotify_re_init_session(account_pool[current_account_idx], force=True)
-                                token = account_pool[current_account_idx]['login']['session']
+                        if is_retryable:
+                            if 'Cannot get alternative track' in error_str:
+                                alternative_track_unavailable = True
+                            if attempt < max_retries_per_account - 1:
+                                logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {current_account_idx}, reconnecting session: {e}")
+                                self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                                try:
+                                    # Force reconnection to fix stream issues immediately
+                                    spotify_re_init_session(account_pool[current_account_idx], force=True)
+                                    token = account_pool[current_account_idx]['login']['session']
                                 # Refresh quality check with new token
                                 if token.get_user_attribute("type") == "premium" and item_type == 'track':
                                     quality = AudioQuality.VERY_HIGH
@@ -359,6 +360,7 @@ class DownloadWorker:
                                 alternative_track_unavailable = True
                             if attempt < max_retries_per_account - 1:
                                 logger.warning(f"Fallback account {account_idx} stream failed ({error_type}, attempt {attempt + 1}), reconnecting: {e}")
+                                self.update_progress(item, "Reconnecting", item.get('progress', 0))
                                 try:
                                     # Force reconnection to fix fallback account stream issues
                                     spotify_re_init_session(account_pool[account_idx], force=True)
@@ -427,6 +429,7 @@ class DownloadWorker:
                             available_items = [
                                 (local_id, item) for local_id, item in download_queue.items()
                                 if item['available'] and item['item_status'] == 'Waiting'
+                                and item.get('metadata_retry_at', 0) <= time.time()
                             ]
                             
                             if not available_items:
@@ -473,67 +476,91 @@ class DownloadWorker:
 
                 # FETCH METADATA FIRST (before setting status to Downloading)
                 # This ensures GUI shows real track name when download starts
-                try:
-                    if item.get('needs_metadata_fetch'):
-                        # Lazy fetch for playlist items
-                        logger.info(f"Fetching metadata for playlist track ID: {item_id}")
-                        self.update_progress(item, "Fetching metadata...", 0)
-                        
-                        album_lock_ctx = None
-                        if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
-                            album_key = f"{item_service}:{item.get('parent_id')}"
-                            with album_download_locks_lock:
-                                if album_key not in album_download_locks:
-                                    album_download_locks[album_key] = threading.Lock()
-                                album_lock_ctx = album_download_locks[album_key]
-                        
-                        if album_lock_ctx:
-                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
-                        else:
-                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
-                        
-                        # Update download_queue with real metadata BEFORE starting download
-                        with download_queue_lock:
-                            if local_id in download_queue:
-                                download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
-                                download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
-                                download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
-                                download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
-                                download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
-                                download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
+                max_metadata_retries = config.get("metadata_retry_max_attempts", 3)
+                metadata_retry_delay = config.get("metadata_retry_delay", 2)
+                metadata_attempt = 0
+                metadata_failed = False
+
+                while metadata_attempt < max_metadata_retries:
+                    try:
+                        if item.get('needs_metadata_fetch'):
+                            # Lazy fetch for playlist items
+                            logger.info(f"Fetching metadata for playlist track ID: {item_id}")
+                            self.update_progress(item, "Fetching metadata...", 0)
+                            
+                            album_lock_ctx = None
+                            if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                                album_key = f"{item_service}:{item.get('parent_id')}"
+                                with album_download_locks_lock:
+                                    if album_key not in album_download_locks:
+                                        album_download_locks[album_key] = threading.Lock()
+                                    album_lock_ctx = album_download_locks[album_key]
+                            
+                            if album_lock_ctx:
+                                item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                            else:
+                                item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+
+                            if not item_metadata or not item_metadata.get('title'):
+                                raise RuntimeError("Metadata fetch returned empty response")
+                            
+                            # Update download_queue with real metadata BEFORE starting download
+                            with download_queue_lock:
+                                if local_id in download_queue:
+                                    download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
+                                    download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
+                                    download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
+                                    download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
+                                    download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
+                                    download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
                                 download_queue[local_id]['track_number'] = item_metadata.get('track_number')
                                 download_queue[local_id]['needs_metadata_fetch'] = False
+                                download_queue[local_id].pop('metadata_retry_at', None)
                                 download_queue[local_id]['item_status'] = 'Waiting'  # Trigger websocket update
-                                download_queue[local_id]['progress'] = 0
-                                download_queue[local_id]['last_update_time'] = time.time()
-                                # Update our local item reference too
-                                item.update(download_queue[local_id])
-                        
-                        logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
-                        # Update status to Waiting to trigger websocket broadcast with new metadata
-                        self.update_progress(item, "Waiting", 0)
-                        # Small delay to ensure websocket broadcasts the metadata update before we start downloading
-                        time.sleep(0.1)
-                    else:
-                        # For albums, metadata is already in the queue
-                        album_lock_ctx = None
-                        if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
-                            album_key = f"{item_service}:{item.get('parent_id')}"
-                            with album_download_locks_lock:
-                                if album_key not in album_download_locks:
-                                    album_download_locks[album_key] = threading.Lock()
-                                album_lock_ctx = album_download_locks[album_key]
-                        
-                        if album_lock_ctx:
-                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                                    download_queue[local_id]['progress'] = 0
+                                    download_queue[local_id]['last_update_time'] = time.time()
+                                    # Update our local item reference too
+                                    item.update(download_queue[local_id])
+                            
+                            logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
+                            # Update status to Waiting to trigger websocket broadcast with new metadata
+                            self.update_progress(item, "Waiting", 0)
+                            # Small delay to ensure websocket broadcasts the metadata update before we start downloading
+                            time.sleep(0.1)
                         else:
-                            item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
-                except (Exception, KeyError) as e:
-                    logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
-                    item['item_status'] = "Failed"
-                    self.update_progress(item, "Failed", 0)
-                    increment_failure_count(account_index)
-                    self.readd_item_to_download_queue(item)
+                            # For albums, metadata is already in the queue
+                            album_lock_ctx = None
+                            if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
+                                album_key = f"{item_service}:{item.get('parent_id')}"
+                                with album_download_locks_lock:
+                                    if album_key not in album_download_locks:
+                                        album_download_locks[album_key] = threading.Lock()
+                                    album_lock_ctx = album_download_locks[album_key]
+                            
+                            if album_lock_ctx:
+                                item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
+                            else:
+                                item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                        break
+                    except (Exception, KeyError) as e:
+                        metadata_attempt += 1
+                        if metadata_attempt < max_metadata_retries:
+                            logger.warning(
+                                f"Metadata fetch failed for '{item_id}' (attempt {metadata_attempt}/{max_metadata_retries}): {e}. Retrying..."
+                            )
+                            self.update_progress(item, "Reconnecting", 0)
+                            time.sleep(metadata_retry_delay)
+                            continue
+                        logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
+                        cooldown = config.get("metadata_retry_cooldown", 30)
+                        item['metadata_retry_at'] = time.time() + cooldown
+                        item['item_status'] = "Waiting"
+                        self.update_progress(item, "Reconnecting", 0)
+                        self.readd_item_to_download_queue(item)
+                        metadata_failed = True
+                        break
+
+                if metadata_failed:
                     continue
 
                 # NOW set status to Downloading (with real track name in GUI)
@@ -868,6 +895,7 @@ class DownloadWorker:
                                     if download_retry_count < max_download_retries:
                                         logger.warning(f"Download interrupted (attempt {download_retry_count}/{max_download_retries}): {error_str}")
                                         logger.info(f"Forcing session recreation and retrying download...")
+                                        self.update_progress(item, "Reconnecting", item.get('progress', 0))
 
                                         # FORCE session recreation on stream death/corruption
                                         current_account_idx = self._find_account_index('spotify', token)
