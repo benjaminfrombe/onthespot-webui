@@ -7,6 +7,7 @@ import time
 import traceback
 import os
 import queue
+import json
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from librespot.metadata import TrackId, EpisodeId
 from yt_dlp import YoutubeDL
@@ -27,6 +28,25 @@ from . import runtimedata
 from .utils import format_item_path, convert_audio_format, embed_metadata, set_music_thumbnail, fix_mp3_metadata, add_to_m3u_file, strip_metadata, convert_video_format
 
 logger = get_logger("downloader")
+_METADATA_MIGRATION_CACHE = None
+
+
+def _load_metadata_migration():
+    global _METADATA_MIGRATION_CACHE
+    if _METADATA_MIGRATION_CACHE is not None:
+        return _METADATA_MIGRATION_CACHE
+    path = os.path.join(config.get('_cache_dir'), 'metadata_migration.json')
+    try:
+        if os.path.isfile(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            _METADATA_MIGRATION_CACHE = data if isinstance(data, dict) else {}
+        else:
+            _METADATA_MIGRATION_CACHE = {}
+    except Exception as e:
+        logger.warning(f"Failed to load metadata migration cache: {e}")
+        _METADATA_MIGRATION_CACHE = {}
+    return _METADATA_MIGRATION_CACHE
 
 # Shared helper to compute the final output path with the expected extension.
 def build_final_file_path(base_path, item_type, default_format, item_service=None):
@@ -494,6 +514,54 @@ class DownloadWorker:
                     while metadata_attempt < max_metadata_retries:
                         try:
                             if item.get('needs_metadata_fetch'):
+                                if item_service == "spotify" and item.get('parent_category') == 'playlist':
+                                    migration_cache = _load_metadata_migration()
+                                    migration_entry = migration_cache.get(item_id) if migration_cache else None
+                                    if migration_entry:
+                                        item_metadata = {
+                                            'item_id': item_id,
+                                            'title': migration_entry.get('title') or item.get('item_name', ''),
+                                            'artists': migration_entry.get('artists', ''),
+                                            'album_name': item.get('playlist_name', ''),
+                                            'album_artists': migration_entry.get('artists', '') or 'Various Artists',
+                                            'album_type': 'playlist',
+                                            'image_url': item.get('item_thumbnail', ''),
+                                            'release_year': '',
+                                            'track_number': item.get('playlist_number') or 1,
+                                            'total_tracks': item.get('playlist_total') or 1,
+                                            'disc_number': 1,
+                                            'total_discs': 1,
+                                            'genre': '',
+                                            'label': '',
+                                            'copyright': '',
+                                            'explicit': False,
+                                            'isrc': None,
+                                            'length': '',
+                                            'item_url': migration_entry.get('item_url') or f"https://open.spotify.com/track/{item_id}",
+                                        }
+
+                                        with download_queue_lock:
+                                            if local_id in download_queue:
+                                                download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
+                                                download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
+                                                download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
+                                                download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
+                                                download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
+                                                download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
+                                                download_queue[local_id]['track_number'] = item_metadata.get('track_number')
+                                                download_queue[local_id]['needs_metadata_fetch'] = False
+                                                download_queue[local_id]['cached_metadata'] = item_metadata
+                                                download_queue[local_id].pop('metadata_retry_at', None)
+                                                download_queue[local_id]['item_status'] = 'Waiting'
+                                                download_queue[local_id]['progress'] = 0
+                                                download_queue[local_id]['last_update_time'] = time.time()
+                                                item.update(download_queue[local_id])
+
+                                        logger.info(f"Metadata restored from migration cache: {item_metadata.get('title')} by {item_metadata.get('artists')}")
+                                        self.update_progress(item, "Waiting", 0)
+                                        time.sleep(0.1)
+                                        break
+
                                 # Lazy fetch for playlist items
                                 logger.info(f"Fetching metadata for playlist track ID: {item_id}")
                                 self.update_progress(item, "Fetching metadata...", 0)
