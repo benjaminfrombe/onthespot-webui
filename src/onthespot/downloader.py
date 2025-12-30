@@ -762,7 +762,7 @@ class DownloadWorker:
                 if item['item_status'] == 'Already Exists':
                     continue
 
-                if not item_metadata['is_playable']:
+                if item_metadata.get('is_playable') is False:
                     logger.error(f"Track is unavailable, track id '{item_id}'")
                     item['item_status'] = 'Unavailable'
                     self.update_progress(item, "Unavailable", 0)

@@ -292,6 +292,7 @@ def parsingworker():
                                             'explicit': explicit,
                                             'isrc': isrc,
                                             'length': str(track_obj.get('duration_ms') or ''),
+                                            'is_playable': track_obj.get('is_playable', True),
                                             'item_url': item_url,
                                         }
 
@@ -341,9 +342,13 @@ def parsingworker():
                                 
                                 try:
                                     # Calculate playlist directory from formatter
-                                    playlist_path_template = config.get('playlist_path_formatter')
-                                    # Extract just the directory part (everything before the last /)
-                                    dir_template = playlist_path_template.rsplit('/', 1)[0] if '/' in playlist_path_formatter else ''
+                                    playlist_path_template = config.get('playlist_path_formatter') or ''
+                                    # Extract just the directory part (everything before the last separator)
+                                    dir_template = ''
+                                    for sep in (os.path.sep, '/'):
+                                        if sep in playlist_path_template:
+                                            dir_template = playlist_path_template.rsplit(sep, 1)[0]
+                                            break
                                     
                                     # Format with available variables
                                     playlist_dir = dir_template.format(
