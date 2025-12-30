@@ -24,6 +24,8 @@ _album_track_ids_cache_lock = threading.Lock()
 _spotify_app_token = {"access_token": None, "expires_at": 0}
 _spotify_app_token_lock = threading.Lock()
 _spotify_app_token_cred_index = -1
+_spotify_app_credential_backoff = {}
+_spotify_app_credential_backoff_lock = threading.Lock()
 
 
 def _normalize_spotify_client_credentials(raw_credentials):
@@ -106,8 +108,13 @@ def _select_next_spotify_credential(credentials):
     global _spotify_app_token_cred_index
     if not credentials:
         return None
-    _spotify_app_token_cred_index = (_spotify_app_token_cred_index + 1) % len(credentials)
-    return credentials[_spotify_app_token_cred_index]
+    now = time.time()
+    for _ in range(len(credentials)):
+        _spotify_app_token_cred_index = (_spotify_app_token_cred_index + 1) % len(credentials)
+        candidate = credentials[_spotify_app_token_cred_index]
+        if not _is_spotify_credential_rate_limited(candidate.get("client_id"), now):
+            return candidate
+    return None
 
 
 def _mask_value(value, visible=6):
@@ -116,6 +123,33 @@ def _mask_value(value, visible=6):
     if len(value) <= visible:
         return value
     return f"...{value[-visible:]}"
+
+
+def _is_spotify_credential_rate_limited(client_id, now=None):
+    if not client_id:
+        return False
+    now = now or time.time()
+    with _spotify_app_credential_backoff_lock:
+        until = _spotify_app_credential_backoff.get(client_id)
+        if not until:
+            return False
+        if until <= now:
+            _spotify_app_credential_backoff.pop(client_id, None)
+            return False
+        return True
+
+
+def _backoff_spotify_credential(client_id, seconds=3600):
+    if not client_id:
+        return
+    until = time.time() + seconds
+    with _spotify_app_credential_backoff_lock:
+        _spotify_app_credential_backoff[client_id] = until
+    logger.warning(
+        "Backing off Spotify client_id=%s for %ss due to rate limit.",
+        _mask_value(client_id),
+        seconds,
+    )
 
 
 def _spotify_get_app_access_token(force_rotate=False):
@@ -143,6 +177,7 @@ def _spotify_get_app_access_token(force_rotate=False):
         while credentials and attempts < len(credentials):
             cred = _select_next_spotify_credential(credentials)
             if cred is None:
+                logger.warning("All Spotify client credentials are in backoff.")
                 break
 
             client_id = cred["client_id"]
@@ -174,6 +209,7 @@ def _spotify_get_app_access_token(force_rotate=False):
 
                 _spotify_app_token["access_token"] = access_token
                 _spotify_app_token["expires_at"] = now + expires_in
+                _spotify_app_token["client_id"] = client_id
                 logger.info("Spotify app token refreshed (expires_in=%ss).", expires_in)
                 return access_token
 
@@ -215,6 +251,7 @@ def _spotify_get_app_access_token(force_rotate=False):
                     "Spotify app token rate limited (Retry-After=%ss). Rotating credentials.",
                     wait_seconds,
                 )
+                _backoff_spotify_credential(client_id, seconds=3600)
                 attempts += 1
                 if len(credentials) <= 1:
                     time.sleep(max(0, wait_seconds))
@@ -253,7 +290,9 @@ def _spotify_make_call_with_headers(
 ):
     refresh_headers = None
     if auth_source == "app":
+        current_client_id = _spotify_app_token.get("client_id")
         def refresh_headers():
+            _backoff_spotify_credential(current_client_id, seconds=3600)
             new_headers, new_source = _spotify_get_public_api_headers(
                 token, context, force_rotate=True
             )
