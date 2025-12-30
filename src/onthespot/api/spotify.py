@@ -824,12 +824,18 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath, _retry=Fal
                     lyrics.append(f'[by:{resp["lyrics"]["provider"]}]')
 
                 if config.get("embed_length"):
-                    l_ms = int(metadata['length'])
-                    if round((l_ms/1000)/60) < 10:
-                        digit="0"
-                    else:
-                        digit=""
-                    lyrics.append(f'[length:{digit}{round((l_ms/1000)/60)}:{round((l_ms/1000)%60)}]\n')
+                    length_value = metadata.get('length')
+                    try:
+                        l_ms = int(length_value)
+                    except (TypeError, ValueError):
+                        l_ms = None
+                        logger.debug(f"Skipping embed_length for {item_id}: invalid length '{length_value}'")
+                    if l_ms is not None:
+                        if round((l_ms/1000)/60) < 10:
+                            digit="0"
+                        else:
+                            digit=""
+                        lyrics.append(f'[length:{digit}{round((l_ms/1000)/60)}:{round((l_ms/1000)%60)}]\n')
 
             default_length = len(lyrics)
 
