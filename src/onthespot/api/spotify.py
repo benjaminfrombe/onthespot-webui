@@ -896,7 +896,7 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
     limit = 100
 
     while True:
-        url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}&fields=items(track(id,type)),total'
+        url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}&fields=items(track(id,type,name,artists(name),external_urls(spotify),is_playable)),total'
         
         # Use app token if available (much higher rate limits than session token)
         try:
