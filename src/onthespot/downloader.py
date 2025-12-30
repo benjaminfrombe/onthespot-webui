@@ -29,6 +29,8 @@ from .utils import format_item_path, convert_audio_format, embed_metadata, set_m
 
 logger = get_logger("downloader")
 _METADATA_MIGRATION_CACHE = None
+_METADATA_CACHE = None
+_METADATA_CACHE_LOCK = threading.Lock()
 
 
 def _load_metadata_migration():
@@ -47,6 +49,49 @@ def _load_metadata_migration():
         logger.warning(f"Failed to load metadata migration cache: {e}")
         _METADATA_MIGRATION_CACHE = {}
     return _METADATA_MIGRATION_CACHE
+
+
+def _load_metadata_cache():
+    global _METADATA_CACHE
+    if _METADATA_CACHE is not None:
+        return _METADATA_CACHE
+    path = os.path.join(config.get('_cache_dir'), 'metadata_cache.json')
+    try:
+        if os.path.isfile(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            _METADATA_CACHE = data if isinstance(data, dict) else {}
+        else:
+            _METADATA_CACHE = {}
+    except Exception as e:
+        logger.warning(f"Failed to load metadata cache: {e}")
+        _METADATA_CACHE = {}
+    return _METADATA_CACHE
+
+
+def _save_metadata_cache(cache_data):
+    path = os.path.join(config.get('_cache_dir'), 'metadata_cache.json')
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f)
+    except Exception as e:
+        logger.warning(f"Failed to save metadata cache: {e}")
+
+
+def _get_metadata_cache_entry(cache_key):
+    with _METADATA_CACHE_LOCK:
+        cache_data = _load_metadata_cache()
+        return cache_data.get(cache_key)
+
+
+def _set_metadata_cache_entry(cache_key, metadata):
+    if not isinstance(metadata, dict):
+        return
+    with _METADATA_CACHE_LOCK:
+        cache_data = _load_metadata_cache()
+        cache_data[cache_key] = metadata
+        _save_metadata_cache(cache_data)
 
 # Shared helper to compute the final output path with the expected extension.
 def build_final_file_path(base_path, item_type, default_format, item_service=None):
@@ -520,6 +565,37 @@ class DownloadWorker:
                     while metadata_attempt < max_metadata_retries:
                         try:
                             if item.get('needs_metadata_fetch'):
+                                cache_key = f"{item_service}:{item_type}:{item_id}"
+                                cached_metadata = _get_metadata_cache_entry(cache_key)
+                                if cached_metadata:
+                                    item_metadata = cached_metadata
+                                    if item.get('parent_category') == 'playlist':
+                                        item_metadata['track_number'] = item.get('playlist_number') or item_metadata.get('track_number')
+                                        if item.get('playlist_total'):
+                                            item_metadata['total_tracks'] = item.get('playlist_total')
+                                    if not item_metadata.get('image_url'):
+                                        item_metadata['image_url'] = item.get('item_thumbnail', '')
+                                    with download_queue_lock:
+                                        if local_id in download_queue:
+                                            download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
+                                            download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
+                                            download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
+                                            download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
+                                            download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
+                                            download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
+                                            download_queue[local_id]['track_number'] = item_metadata.get('track_number')
+                                            download_queue[local_id]['needs_metadata_fetch'] = False
+                                            download_queue[local_id]['cached_metadata'] = item_metadata
+                                            download_queue[local_id].pop('metadata_retry_at', None)
+                                            download_queue[local_id]['item_status'] = 'Waiting'
+                                            download_queue[local_id]['progress'] = 0
+                                            download_queue[local_id]['last_update_time'] = time.time()
+                                            item.update(download_queue[local_id])
+                                    logger.info(f"Metadata loaded from cache: {item_metadata.get('title')} by {item_metadata.get('artists')}")
+                                    self.update_progress(item, "Waiting", 0)
+                                    time.sleep(0.1)
+                                    break
+
                                 if item_service == "spotify" and item.get('parent_category') == 'playlist':
                                     migration_cache = _load_metadata_migration()
                                     migration_entry = migration_cache.get(item_id) if migration_cache else None
@@ -565,6 +641,7 @@ class DownloadWorker:
 
                                         logger.info(f"Metadata restored from migration cache: {item_metadata.get('title')} by {item_metadata.get('artists')}")
                                         self.update_progress(item, "Waiting", 0)
+                                        _set_metadata_cache_entry(cache_key, item_metadata)
                                         time.sleep(0.1)
                                         break
 
@@ -609,6 +686,7 @@ class DownloadWorker:
                                 logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
                                 # Update status to Waiting to trigger websocket broadcast with new metadata
                                 self.update_progress(item, "Waiting", 0)
+                                _set_metadata_cache_entry(cache_key, item_metadata)
                                 # Small delay to ensure websocket broadcasts the metadata update before we start downloading
                                 time.sleep(0.1)
                             else:
