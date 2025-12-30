@@ -320,6 +320,9 @@ class DownloadWorker:
                                                                  'Unable to', 'Failed fetching audio key']))
 
                     if is_retryable:
+                        if 'audio key error' in error_str and 'code: 2' in error_str:
+                            alternative_track_unavailable = True
+                            raise RuntimeError("Cannot get alternative track")
                         if 'Cannot get alternative track' in error_str:
                             alternative_track_unavailable = True
                         if attempt < max_retries_per_account - 1:
@@ -376,6 +379,9 @@ class DownloadWorker:
                                                                      'Unable to', 'Failed fetching audio key']))
 
                         if is_retryable:
+                            if 'audio key error' in error_str and 'code: 2' in error_str:
+                                alternative_track_unavailable = True
+                                raise RuntimeError("Cannot get alternative track")
                             if 'Cannot get alternative track' in error_str:
                                 alternative_track_unavailable = True
                             if attempt < max_retries_per_account - 1:
@@ -1506,7 +1512,7 @@ class DownloadWorker:
 
                 except RuntimeError as e:
                     error_str = str(e).lower()
-                    if "audio key error" in error_str and "code: 2" in error_str:
+                    if ("audio key error" in error_str and "code: 2" in error_str) or "failed fetching audio key" in error_str:
                         logger.error(f"Track is unavailable (audio key error code 2), track id '{item_id}'")
                         item['item_status'] = 'Unavailable'
                         self.update_progress(item, "Unavailable", 0)
@@ -1662,7 +1668,7 @@ class DownloadWorker:
                 continue
             except Exception as e:
                 error_str = str(e).lower()
-                if "audio key error" in error_str and "code: 2" in error_str:
+                if ("audio key error" in error_str and "code: 2" in error_str) or "failed fetching audio key" in error_str:
                     logger.error(f"Track is unavailable (audio key error code 2), track id '{item_id}'")
                     item['item_status'] = 'Unavailable'
                     self.update_progress(item, "Unavailable", 0)
