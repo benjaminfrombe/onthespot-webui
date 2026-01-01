@@ -31,6 +31,9 @@ logger = get_logger("downloader")
 _METADATA_MIGRATION_CACHE = None
 _METADATA_CACHE = None
 _METADATA_CACHE_LOCK = threading.Lock()
+_EXISTING_FILE_CACHE = None
+_EXISTING_FILE_CACHE_LOCK = threading.Lock()
+_EXISTING_FILE_CACHE_VERSION = 1
 
 
 def _load_metadata_migration():
@@ -93,6 +96,91 @@ def _set_metadata_cache_entry(cache_key, metadata):
         cache_data[cache_key] = metadata
         _save_metadata_cache(cache_data)
 
+
+def _existing_file_cache_signature():
+    signature_keys = [
+        'audio_download_path',
+        'video_download_path',
+        'raw_media_download',
+        'track_file_format',
+        'podcast_file_format',
+        'movie_file_format',
+        'show_file_format',
+        'track_path_formatter',
+        'podcast_path_formatter',
+        'movie_path_formatter',
+        'show_path_formatter',
+        'playlist_path_formatter',
+        'use_playlist_path',
+        'translate_file_path',
+        'use_double_digit_path_numbers',
+        'explicit_label',
+    ]
+    signature_data = {key: config.get(key) for key in signature_keys}
+    return json.dumps(signature_data, sort_keys=True)
+
+
+def _load_existing_file_cache():
+    global _EXISTING_FILE_CACHE
+    if _EXISTING_FILE_CACHE is not None:
+        return _EXISTING_FILE_CACHE
+    path = os.path.join(config.get('_cache_dir'), 'existing_file_cache.json')
+    signature = _existing_file_cache_signature()
+    try:
+        if os.path.isfile(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if (
+                isinstance(data, dict)
+                and data.get('version') == _EXISTING_FILE_CACHE_VERSION
+                and data.get('signature') == signature
+                and isinstance(data.get('items'), dict)
+            ):
+                _EXISTING_FILE_CACHE = data
+            else:
+                _EXISTING_FILE_CACHE = {'version': _EXISTING_FILE_CACHE_VERSION, 'signature': signature, 'items': {}}
+        else:
+            _EXISTING_FILE_CACHE = {'version': _EXISTING_FILE_CACHE_VERSION, 'signature': signature, 'items': {}}
+    except Exception as e:
+        logger.warning(f"Failed to load existing file cache: {e}")
+        _EXISTING_FILE_CACHE = {'version': _EXISTING_FILE_CACHE_VERSION, 'signature': signature, 'items': {}}
+    return _EXISTING_FILE_CACHE
+
+
+def _save_existing_file_cache(cache_data):
+    path = os.path.join(config.get('_cache_dir'), 'existing_file_cache.json')
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f)
+    except Exception as e:
+        logger.warning(f"Failed to save existing file cache: {e}")
+
+
+def _get_existing_file_cache_entry(cache_key):
+    with _EXISTING_FILE_CACHE_LOCK:
+        cache_data = _load_existing_file_cache()
+        return cache_data.get('items', {}).get(cache_key)
+
+
+def _set_existing_file_cache_entry(cache_key, file_path):
+    if not cache_key or not file_path:
+        return
+    with _EXISTING_FILE_CACHE_LOCK:
+        cache_data = _load_existing_file_cache()
+        cache_data.setdefault('items', {})[cache_key] = file_path
+        _save_existing_file_cache(cache_data)
+
+
+def _clear_existing_file_cache_entry(cache_key):
+    if not cache_key:
+        return
+    with _EXISTING_FILE_CACHE_LOCK:
+        cache_data = _load_existing_file_cache()
+        if cache_key in cache_data.get('items', {}):
+            cache_data['items'].pop(cache_key, None)
+            _save_existing_file_cache(cache_data)
+
 # Shared helper to compute the final output path with the expected extension.
 def build_final_file_path(base_path, item_type, default_format, item_service=None):
     """
@@ -129,6 +217,17 @@ def build_final_file_path(base_path, item_type, default_format, item_service=Non
 
     logger.warning("Default format not set for raw download; using base path without extension")
     return base_path
+
+
+def _get_expected_existing_path(base_path, item_type, item_service):
+    if item_type in ('movie', 'episode'):
+        if config.get('raw_media_download'):
+            return base_path + '.mp4'
+        output_format = config.get("movie_file_format") if item_type == "movie" else config.get("show_file_format")
+        if output_format:
+            return base_path + "." + output_format
+        return base_path
+    return build_final_file_path(base_path, item_type, None, item_service=item_service)
 
 
 class RetryWorker:
@@ -209,6 +308,42 @@ class DownloadWorker:
     def start(self):
         logger.info('Starting Download Worker')
         self.thread.start()
+
+    def _finalize_existing_item(self, item, item_metadata, existing_path, account_index, item_id, cache_key, target_filename=None):
+        existing_name = os.path.basename(existing_path)
+        if target_filename is None:
+            target_filename = existing_name
+        item_metadata = item_metadata or {}
+        logger.info(f"MATCH FOUND! File '{existing_name}' matches target '{target_filename}' - Skipping download and metadata rewrite")
+        item['file_path'] = existing_path
+
+        # Set status to Already Exists first
+        if item['item_status'] in ('Downloading', 'Setting Thumbnail', 'Adding To M3U', 'Getting Lyrics'):
+            self.update_progress(item, "Already Exists", 100)
+        item['item_status'] = 'Already Exists'
+
+        # M3U - track after status is set
+        if config.get('create_m3u_file') and item.get('parent_category') == 'playlist' and not item.get('_m3u_written'):
+            try:
+                add_to_m3u_file(item, item_metadata)
+                item['_m3u_written'] = True
+            except Exception as m3u_error:
+                logger.error(f"Failed to add item to M3U file: {str(m3u_error)}\nTraceback: {traceback.format_exc()}")
+                logger.warning("M3U write failed, but file download was successful and will not be deleted")
+        logger.info(f"File already exists (found as {existing_name}), Skipping download for track by id '{item_id}'")
+        reset_failure_count(account_index)  # Reset failure counter since file exists
+
+        # Track completed playlist item (if not already tracked above)
+        if config.get('create_m3u_file') and item.get('parent_category') == 'playlist' and not item.get('_m3u_written'):
+            try:
+                add_to_m3u_file(item, item_metadata)
+            except Exception as m3u_error:
+                logger.error(f"Failed to track existing playlist item for M3U: {str(m3u_error)}")
+
+        _set_existing_file_cache_entry(cache_key, existing_path)
+        time.sleep(0.2)
+        item['progress'] = 100
+        self.readd_item_to_download_queue(item)
 
 
     def readd_item_to_download_queue(self, item):
@@ -550,6 +685,29 @@ class DownloadWorker:
                 # Get token first (needed for metadata fetch)
                 token = get_account_token(item_service, rotate=config.get("rotate_active_account_number"))
                 account_index = self._find_account_index(item_service, token) if token else None
+                cache_key = f"{item_service}:{item_type}:{item_id}"
+
+                cached_path = _get_existing_file_cache_entry(cache_key)
+                if cached_path:
+                    if os.path.isfile(cached_path):
+                        item_metadata = item.get('cached_metadata') or _get_metadata_cache_entry(cache_key) or {}
+                        if item_metadata:
+                            with download_queue_lock:
+                                if local_id in download_queue:
+                                    download_queue[local_id]['item_name'] = item_metadata.get('title', 'Unknown')
+                                    download_queue[local_id]['item_by'] = item_metadata.get('artists', '')
+                                    download_queue[local_id]['item_url'] = item_metadata.get('item_url', '')
+                                    download_queue[local_id]['item_thumbnail'] = item_metadata.get('image_url', item.get('item_thumbnail', ''))
+                                    download_queue[local_id]['album_name'] = item_metadata.get('album_name', '')
+                                    download_queue[local_id]['item_album_name'] = item_metadata.get('album_name', '')
+                                    download_queue[local_id]['track_number'] = item_metadata.get('track_number')
+                                    download_queue[local_id]['cached_metadata'] = item_metadata
+                                    item.update(download_queue[local_id])
+                        logger.info(f"Existing file cache hit for '{item_id}': {cached_path}")
+                        self._finalize_existing_item(item, item_metadata, cached_path, account_index, item_id, cache_key)
+                        continue
+                    logger.info(f"Existing file cache stale for '{item_id}': {cached_path}")
+                    _clear_existing_file_cache_entry(cache_key)
 
                 # FETCH METADATA FIRST (before setting status to Downloading)
                 # This ensures GUI shows real track name when download starts
@@ -788,66 +946,16 @@ class DownloadWorker:
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
                     logger.info(f"DEBUG full file_path: {file_path}")
 
-                    # Skip download if file exists under different extension
+                    # Skip download if file exists at the expected output path
                     file_directory = os.path.dirname(file_path)
                     target_filename = os.path.basename(file_path)
 
-                    logger.info(f"Checking for existing files matching: '{target_filename}.*' in {file_directory}")
-
                     # Check if directory exists first to avoid exception overhead
                     if os.path.isdir(file_directory):
-                        # Use set for O(1) lookup instead of list
-                        audio_exts = {".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".wma"}
-                        subtitle_exts = {".lrc", ".ass", ".srt", ".vtt"}
-
-                        # Use scandir instead of listdir - avoids separate stat calls
-                        for entry in os.scandir(file_directory):
-                            # entry.is_file() uses cached stat info from scandir
-                            if not entry.is_file():
-                                continue
-
-                            # Skip subtitle/lyrics files
-                            if any(entry.name.endswith(ext) for ext in subtitle_exts):
-                                continue
-
-                            # Check if file matches target (strip audio extension)
-                            # Use os.path.splitext for cleaner extension handling
-                            entry_base, entry_ext = os.path.splitext(entry.name)
-                            if entry_ext.lower() not in audio_exts:
-                                # Not an audio file, use full name
-                                entry_base = entry.name
-
-                            if entry_base == target_filename:
-                                logger.info(f"MATCH FOUND! File '{entry.name}' matches target '{target_filename}' - Skipping download and metadata rewrite")
-                                item['file_path'] = entry.path
-
-                                # Set status to Already Exists first
-                                if item['item_status'] in ('Downloading', 'Setting Thumbnail', 'Adding To M3U', 'Getting Lyrics'):
-                                    self.update_progress(item, "Already Exists", 100)
-                                item['item_status'] = 'Already Exists'
-                                
-                                # M3U - track after status is set
-                                if config.get('create_m3u_file') and item.get('parent_category') == 'playlist' and not item.get('_m3u_written'):
-                                    try:
-                                        add_to_m3u_file(item, item_metadata)
-                                        item['_m3u_written'] = True
-                                    except Exception as m3u_error:
-                                        logger.error(f"Failed to add item to M3U file: {str(m3u_error)}\nTraceback: {traceback.format_exc()}")
-                                        logger.warning("M3U write failed, but file download was successful and will not be deleted")
-                                logger.info(f"File already exists (found as {entry.name}), Skipping download for track by id '{item_id}'")
-                                reset_failure_count(account_index)  # Reset failure counter since file exists
-                                
-                                # Track completed playlist item (if not already tracked above)
-                                if config.get('create_m3u_file') and item.get('parent_category') == 'playlist' and not item.get('_m3u_written'):
-                                    try:
-                                        add_to_m3u_file(item, item_metadata)
-                                    except Exception as m3u_error:
-                                        logger.error(f"Failed to track existing playlist item for M3U: {str(m3u_error)}")
-                                
-                                time.sleep(0.2)
-                                item['progress'] = 100
-                                self.readd_item_to_download_queue(item)
-                                break
+                        expected_path = _get_expected_existing_path(file_path, item_type, item_service)
+                        logger.info(f"Checking for existing file at expected path: {expected_path}")
+                        if os.path.isfile(expected_path):
+                            self._finalize_existing_item(item, item_metadata, expected_path, account_index, item_id, cache_key, target_filename=target_filename)
 
                 if item['item_status'] == 'Already Exists':
                     continue
@@ -1602,6 +1710,16 @@ class DownloadWorker:
                         self.update_progress(item, "Unavailable", 0)
                         self.readd_item_to_download_queue(item)
                         continue
+                    if (
+                        "cannot find suitable audio file" in error_str
+                        or "couldn't find any vorbis file" in error_str
+                        or "could not find any vorbis file" in error_str
+                    ):
+                        logger.error(f"Track is unavailable (no ogg/vorbis source), track id '{item_id}'")
+                        item['item_status'] = 'Unavailable'
+                        self.update_progress(item, "Unavailable", 0)
+                        self.readd_item_to_download_queue(item)
+                        continue
                     if "cannot get alternative track" in error_str:
                         logger.error(f"Track is unavailable, track id '{item_id}'")
                         item['item_status'] = 'Unavailable'
@@ -1733,6 +1851,8 @@ class DownloadWorker:
                 item['progress'] = 100
                 self.update_progress(item, "Downloaded", 100)
                 reset_failure_count(account_index)  # Reset failure counter on successful download
+                if item.get('file_path'):
+                    _set_existing_file_cache_entry(cache_key, item['file_path'])
                 
                 # Track completed playlist item and write M3U if playlist is complete
                 if config.get('create_m3u_file') and item.get('parent_category') == 'playlist':
@@ -1754,6 +1874,17 @@ class DownloadWorker:
                 error_str = str(e).lower()
                 if ("audio key error" in error_str and "code: 2" in error_str) or "failed fetching audio key" in error_str:
                     logger.error(f"Track is unavailable (audio key error code 2), track id '{item_id}'")
+                    item['item_status'] = 'Unavailable'
+                    self.update_progress(item, "Unavailable", 0)
+                    self.readd_item_to_download_queue(item)
+                    time.sleep(config.get("download_delay"))
+                    continue
+                if (
+                    "cannot find suitable audio file" in error_str
+                    or "couldn't find any vorbis file" in error_str
+                    or "could not find any vorbis file" in error_str
+                ):
+                    logger.error(f"Track is unavailable (no ogg/vorbis source), track id '{item_id}'")
                     item['item_status'] = 'Unavailable'
                     self.update_progress(item, "Unavailable", 0)
                     self.readd_item_to_download_queue(item)
