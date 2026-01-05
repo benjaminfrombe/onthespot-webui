@@ -19,7 +19,7 @@ from .api.bandcamp import bandcamp_get_track_metadata, bandcamp_login_user
 from .api.deezer import deezer_get_track_metadata, deezer_add_account, deezer_login_user
 from .api.qobuz import qobuz_get_track_metadata, qobuz_add_account, qobuz_login_user
 from .api.soundcloud import soundcloud_get_track_metadata, soundcloud_add_account, soundcloud_login_user
-from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user
+from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user, spotify_re_init_session
 from .api.tidal import tidal_get_track_metadata, tidal_login_user
 from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account, youtube_music_login_user
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account, crunchyroll_login_user
@@ -148,6 +148,43 @@ login_manager.init_app(app)
 # Initialize SocketIO - use simple threading mode (proven to work smoothly)
 # Gevent was causing choppy progress due to greenlet scheduling issues
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+_last_request_time = 0.0
+_session_check_lock = threading.Lock()
+
+
+def _maybe_refresh_spotify_session():
+    global _last_request_time
+    now = time.time()
+    idle_threshold = 30 * 60
+    if (now - _last_request_time) < idle_threshold:
+        return
+    if not _session_check_lock.acquire(blocking=False):
+        return
+    try:
+        now = time.time()
+        idle_seconds = now - _last_request_time
+        if idle_seconds < idle_threshold:
+            return
+        _last_request_time = now
+        if not account_pool:
+            return
+        active_index = config.get('active_account_number')
+        if active_index is None or active_index >= len(account_pool):
+            return
+        account = account_pool[active_index]
+        if account.get('service') != 'spotify':
+            return
+        if account.get('status') != 'active':
+            return
+        logger.info("Proactive Spotify session refresh after idle %.0fs", idle_seconds)
+        spotify_re_init_session(account, force=True)
+    finally:
+        _session_check_lock.release()
+
+
+@app.before_request
+def _pre_request_session_check():
+    _maybe_refresh_spotify_session()
 
 
 class QueueWorker(threading.Thread):

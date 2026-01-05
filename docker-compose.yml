@@ -1,12 +1,15 @@
 services:
  onthespot-webui:
-    image: onthespot-webui
+    image: onthespot-librespotpatch:latest
     container_name: onthespot-webui
     restart: unless-stopped
+    user: 1000:1000
+    environment:
+      - HOME=/config
+      - PYTHONDONTWRITEBYTECODE=1
     ports:
-     - 5000:5000
+     - 5555:5000
     volumes:
-    - ./Music:/root/Music/OnTheSpot
-    - ./Videos:/root/Videos/OnTheSpot
-    - ./Config:/root/.config/onthespot
     - ./src/onthespot:/app/venv/lib/python3.14/site-packages/onthespot
+    - /data/ogg:/data/ogg
+    - /data/config/onthespot:/config

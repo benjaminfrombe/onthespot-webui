@@ -1,0 +1,391 @@
+--- a/onthespot/api/spotify.py
++++ b/onthespot/api/spotify.py
+@@ -1,6 +1,7 @@
+ import os
+ import time
+ import json
++import gc
+ import struct
+ from threading import Lock
+ from datetime import datetime, timedelta
+@@ -230,6 +231,115 @@ class SpotifyAPI:
+         self._session_last_reconnect = {}
+         self._reconnect_lock = Lock()
+ 
++    def _halt_downloads_for_account(self, uuid: str):
++        """Pause all downloads using this account"""
++        from .runtimedata import get_download_queue
++        
++        logger.info(f"⏸️  Halting downloads for account {uuid}")
++        
++        # Mark account as unavailable temporarily
++        if not hasattr(self, '_halted_accounts'):
++            self._halted_accounts = set()
++        self._halted_accounts.add(uuid)
++        
++        # Give active downloads time to detect halt and stop
++        time.sleep(0.5)
++
++    def _resume_downloads_for_account(self, uuid: str):
++        """Resume downloads for this account"""
++        logger.info(f"▶️  Resuming downloads for account {uuid}")
++        
++        if hasattr(self, '_halted_accounts'):
++            self._halted_accounts.discard(uuid)
++
++    def is_account_halted(self, uuid: str) -> bool:
++        """Check if account is temporarily halted"""
++        if hasattr(self, '_halted_accounts'):
++            return uuid in self._halted_accounts
++        return False
++
++    def _cleanup_old_session(self, uuid: str):
++        """Completely cleanup old session resources"""
++        if uuid not in self._sessions:
++            return
++        
++        logger.info(f"🧹 Deep cleaning old session for {uuid}")
++        old_session = self._sessions[uuid]
++        
++        try:
++            # Close any active streams
++            if hasattr(old_session, '_audio_key_manager'):
++                try:
++                    old_session._audio_key_manager.close()
++                except:
++                    pass
++            
++            # Close AP socket
++            if hasattr(old_session, '_ap_socket'):
++                try:
++                    old_session._ap_socket.close()
++                except:
++                    pass
++            
++            # Close dealer connection
++            if hasattr(old_session, '_dealer'):
++                try:
++                    old_session._dealer.close()
++                except:
++                    pass
++            
++            # Call session close if available
++            if hasattr(old_session, 'close'):
++                try:
++                    old_session.close()
++                except:
++                    pass
++        except Exception as e:
++            logger.warning(f"Error during session cleanup: {e}")
++        
++        # Remove from sessions dict
++        del self._sessions[uuid]
++        
++        # Force garbage collection
++        gc.collect()
++        
++        logger.info(f"✓ Session cleanup complete for {uuid}")
++
++    def _validate_session(self, uuid: str) -> bool:
++        """Validate that session is truly ready to use"""
++        if uuid not in self._sessions:
++            return False
++        
++        session = self._sessions[uuid]
++        
++        try:
++            # Test 1: Check session has required attributes
++            if not hasattr(session, 'tokens'):
++                logger.error("Session missing tokens attribute")
++                return False
++            
++            # Test 2: Try to get a token
++            token = self.spotify_get_token(uuid)
++            if not token:
++                logger.error("Failed to get token from session")
++                return False
++            
++            # Test 3: Try a lightweight API call
++            user_attr = session.get_user_attribute("country")
++            if not user_attr:
++                logger.warning("Could not get user attribute")
++                # Not critical, continue
++            
++            # Test 4: Check if session is marked as invalid
++            if hasattr(session, 'is_active') and not session.is_active():
++                logger.error("Session is not active")
++                return False
++            
++            return True
++            
++        except Exception as e:
++            logger.error(f"Session validation failed: {e}")
++            return False
++
+     def spotify_re_init_session(self, uuid: str) -> bool:
+         """
+         Recreate a Spotify session from scratch (nuclear option)
+@@ -244,12 +354,24 @@ class SpotifyAPI:
+         with self._reconnect_lock:
+             account_name = login_data.get("username", uuid)
+             
+-            # Rate limiting: minimum 30s between reconnections
++            # Check if this is a critical error that needs immediate reset
++            force_immediate = getattr(self, '_force_immediate_reset', False)
++            
++            # Rate limiting: minimum 30s between reconnections (unless forced)
+             last_reconnect = self._session_last_reconnect.get(uuid, 0)
+             time_since = time.time() - last_reconnect
+-            if time_since < 30:
+-                logger.info(f"Rate limit: Session for {account_name} was reconnected {time_since:.1f}s ago, skipping reconnection (min interval: 30s)")
+-                return False
++            
++            if not force_immediate:
++                if time_since < 30:
++                    logger.info(f"Rate limit: Session for {account_name} was reconnected {time_since:.1f}s ago, skipping reconnection (min interval: 30s)")
++                    return False
++            else:
++                logger.warning(f"🔥 FORCE IMMEDIATE RESET for {account_name} (overriding rate limit)")
++                # Reset the flag
++                self._force_immediate_reset = False
++                # Halt all downloads for this account
++                self._halt_downloads_for_account(uuid)
+             
+             logger.info(f"NUCLEAR SESSION RESET for account {account_name} (UUID: {uuid})")
+             
+@@ -260,6 +382,15 @@ class SpotifyAPI:
+                 'account_type': login_data.get("type", "unknown")
+             }
+             
++            # Complete cleanup of old session
++            self._cleanup_old_session(uuid)
++            
++            # Wait for system resources to be freed
++            logger.info(f"⏳ Waiting for system resources to be freed...")
++            time.sleep(2)
++            
++            logger.info(f"🔄 Creating fresh session for {account_name}...")
++            
+             # Retry session creation with exponential backoff
+             max_retries = 4
+             retry_count = 0
+@@ -295,6 +426,20 @@ class SpotifyAPI:
+                     
+                     # Store new session
+                     self._sessions[uuid] = new_session
++                    
++                    # Validate session is ready
++                    logger.info(f"🔍 Validating new session...")
++                    if not self._validate_session(uuid):
++                        logger.error(f"Session validation failed for {account_name}")
++                        if retry_count < max_retries - 1:
++                            continue
++                        raise Exception("Session created but validation failed")
++                    
++                    # Warm-up period
++                    logger.info(f"🌡️  Session warm-up period...")
++                    time.sleep(1.5)
++                    
++                    # Log success details
+                     session_info['session_type'] = new_session.get_user_attribute("type")
+                     
+                     # Get bitrate info
+@@ -309,6 +454,9 @@ class SpotifyAPI:
+                     
+                     logger.info(f"✓ NUCLEAR SESSION RESET SUCCESSFUL for {account_name} (bitrate: {bitrate_str})")
+                     
++                    # Resume downloads
++                    self._resume_downloads_for_account(uuid)
++                    
+                     return True
+                     
+                 except ConnectionResetError as e:
+@@ -343,6 +491,9 @@ class SpotifyAPI:
+                 logger.info(f"Retry {retry_count}/{max_retries - 1} for {account_name} after {delay}s delay...")
+                 time.sleep(delay)
+             
++            # If we get here, all retries failed
++            self._resume_downloads_for_account(uuid)
++            
+             logger.error(f"✗ NUCLEAR SESSION RESET FAILED for {account_name}: All retries exhausted")
+             return False
+ 
+@@ -376,6 +527,12 @@ class SpotifyAPI:
+                     logger.info(f"Session invalid for {account_name} ('{field}'), recreating...")
+                     self.spotify_re_init_session(uuid)
+                     return self.spotify_get_token(uuid)
++            
++            # Check if account is halted
++            if self.is_account_halted(uuid):
++                logger.debug(f"Account {account_name} is temporarily halted")
++                return None
++            
+             return self._sessions[uuid].tokens().get("playlist-read")
+         
+         except Exception as e:
+--- a/onthespot/downloader.py
++++ b/onthespot/downloader.py
+@@ -237,6 +237,60 @@ class DownloadWorker(QThread):
+         except Exception as e:
+             logger.exception(f"Unexpected error in _try_get_spotify_stream: {e}")
+             return None, token, -1
++
++    def _trigger_nuclear_reset(self, uuid: str, reason: str):
++        """
++        Trigger an immediate nuclear reset for an account
++        This is used for critical errors that normal reconnection can't fix
++        """
++        from .api.spotify import SpotifyAPI
++        
++        logger.error(f"💥 TRIGGERING NUCLEAR RESET for {uuid}: {reason}")
++        
++        # Set flag to override rate limiting
++        spotify_api = SpotifyAPI()
++        spotify_api._force_immediate_reset = True
++        
++        # Trigger the reset
++        success = spotify_api.spotify_re_init_session(uuid)
++        
++        if success:
++            logger.info(f"✓ Nuclear reset successful for {uuid}")
++        else:
++            logger.error(f"✗ Nuclear reset failed for {uuid}")
++        
++        return success
++
++    def _should_trigger_nuclear_reset(self, error: Exception) -> bool:
++        """
++        Determine if an error is critical enough to warrant nuclear reset
++        """
++        error_str = str(error).lower()
++        error_type = type(error).__name__
++        
++        # Critical errors that indicate corrupted session
++        critical_patterns = [
++            'bad file descriptor',
++            'unpack requires a buffer',
++            'connection reset by peer',
++            'broken pipe',
++            'connection aborted',
++        ]
++        
++        # Check error message
++        for pattern in critical_patterns:
++            if pattern in error_str:
++                return True
++        
++        # Check error type
++        if error_type in ['OSError', 'struct.error', 'ConnectionResetError', 'BrokenPipeError']:
++            # For OSError, check errno if available
++            if isinstance(error, OSError) and hasattr(error, 'errno'):
++                if error.errno in [9, 32, 104]:  # EBADF, EPIPE, ECONNRESET
++                    return True
++            return True
++        
++        return False
+     
+     def _try_get_spotify_stream(self, item, item_id, item_type, token, quality):
+         """
+@@ -262,6 +316,13 @@ class DownloadWorker(QThread):
+                     logger.warning(f"Download stream failed ({type(e).__name__}, attempt {attempt + 1}) on account {account_idx}, reconnecting session: {e}")
+                     
+                     credentials = get_account_credentials()
++                    
++                    # Check if this is a critical error needing nuclear reset
++                    if self._should_trigger_nuclear_reset(e):
++                        uuid = credentials[account_idx][0]
++                        self._trigger_nuclear_reset(uuid, f"{type(e).__name__}: {e}")
++                        continue
++                    
+                     if account_idx < len(credentials):
+                         uuid = credentials[account_idx][0]
+                         spotify_re_init_session(uuid)
+@@ -313,6 +374,13 @@ class DownloadWorker(QThread):
+                     logger.warning(f"Fallback account {fallback_idx} stream failed ({type(e).__name__}, attempt {fallback_attempt + 1}), reconnecting: {e}")
+                     
+                     credentials = get_account_credentials()
++                    
++                    # Check if this is a critical error needing nuclear reset
++                    if self._should_trigger_nuclear_reset(e):
++                        fallback_uuid = credentials[fallback_idx][0]
++                        self._trigger_nuclear_reset(fallback_uuid, f"Fallback {type(e).__name__}: {e}")
++                        continue
++                    
+                     if fallback_idx < len(credentials):
+                         fallback_uuid = credentials[fallback_idx][0]
+                         spotify_re_init_session(fallback_uuid)
+@@ -426,6 +494,18 @@ class DownloadWorker(QThread):
+         """Get Spotify audio stream with retry logic"""
+         try:
+             for attempt in range(max_retries):
++                # Check if account is halted
++                from .api.spotify import SpotifyAPI
++                spotify_api = SpotifyAPI()
++                
++                credentials = get_account_credentials()
++                if account_idx < len(credentials):
++                    uuid = credentials[account_idx][0]
++                    if spotify_api.is_account_halted(uuid):
++                        logger.info(f"Account {account_idx} halted, waiting...")
++                        time.sleep(2)
++                        continue
++                
+                 try:
+                     stream = get_song_audio_stream(
+                         token,
+@@ -438,14 +518,17 @@ class DownloadWorker(QThread):
+                     return stream, token, account_idx
+                     
+                 except Exception as e:
+-                    logger.warning(f"Download stream failed ({type(e).__name__}, attempt {attempt + 1}) on account {account_idx}, reconnecting session: {e}")
++                    error_type = type(e).__name__
++                    logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {account_idx}: {e}")
+                     
+-                    credentials = get_account_credentials()
+-                    if account_idx < len(credentials):
+-                        uuid = credentials[account_idx][0]
++                    # Check if nuclear reset needed
++                    if self._should_trigger_nuclear_reset(e):
++                        self._trigger_nuclear_reset(uuid, f"{error_type}: {e}")
++                        time.sleep(3)  # Give reset time to complete
++                    else:
++                        # Regular reconnection
+                         spotify_re_init_session(uuid)
+-                        logger.info("Session reconnected successfully, retrying...")
+-                        continue
++                    
+                     logger.warning(f"Max retries reached for account {account_idx}")
+                     break
+             
+@@ -91,18 +91,25 @@ class RetryWorker(QThread):
+             # Check for failed downloads
+             failure_count = get_failure_count()
+             
+-            if failure_count >= 5:
+-                logger.warning(f"High failure count ({failure_count}/5), forcing Spotify account reconnection before retry")
++            # More aggressive reconnection for failures
++            if failure_count >= 3:
++                logger.warning(f"High failure count ({failure_count}), forcing complete session reset")
+                 
+-                # Force reconnect all accounts
++                # Nuclear reset for all accounts when failures accumulate
++                from .api.spotify import SpotifyAPI
++                spotify_api = SpotifyAPI()
++                
+                 credentials = get_account_credentials()
+                 reconnected = 0
++                
+                 for idx, (uuid, _) in enumerate(credentials):
+                     try:
+-                        logger.info(f"Reconnecting Spotify account {idx}: {uuid[:20]}...")
+-                        if spotify_re_init_session(uuid):
++                        logger.info(f"Nuclear reset for Spotify account {idx}")
++                        spotify_api._force_immediate_reset = True
++                        if spotify_api.spotify_re_init_session(uuid):
+                             reconnected += 1
+-                    except Exception as e:
++                        time.sleep(3)  # Stagger resets
++                    except Exception as e:
+                         logger.error(f"Failed to reconnect account {idx}: {e}")
+                 
+                 if reconnected > 0:
