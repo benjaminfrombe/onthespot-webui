@@ -1,11 +1,12 @@
 from time import sleep
+import time
 import threading
 from .api.apple_music import apple_music_login_user, apple_music_get_token
 from .api.bandcamp import bandcamp_login_user
 from .api.deezer import deezer_login_user, deezer_get_token
 from .api.qobuz import qobuz_login_user, qobuz_get_token
 from .api.soundcloud import soundcloud_login_user, soundcloud_get_token
-from .api.spotify import spotify_login_user, spotify_get_token
+from .api.spotify import spotify_login_user, spotify_get_token, spotify_re_init_session
 from .api.tidal import tidal_login_user, tidal_get_token
 from .api.youtube_music import youtube_music_login_user
 from .api.generic import generic_login_user
@@ -14,6 +15,9 @@ from .otsconfig import config
 from .runtimedata import get_logger, account_pool
 
 logger = get_logger("accounts")
+_ACCOUNT_POOL_LOCK = threading.Lock()
+_ACCOUNT_RECONNECT_LOCK = threading.Lock()
+_LAST_RECONNECT_ATTEMPT = {}
 
 
 class FillAccountPool(threading.Thread):
@@ -47,45 +51,132 @@ class FillAccountPool(threading.Thread):
             self.finished_callback()
 
 
+def _try_activate_accounts(item_service):
+    with _ACCOUNT_RECONNECT_LOCK:
+        now = time.time()
+        last_attempt = _LAST_RECONNECT_ATTEMPT.get(item_service, 0)
+        min_interval = 15
+        if now - last_attempt < min_interval:
+            logger.info(
+                f"Reconnect attempt for {item_service} skipped: last attempt {now - last_attempt:.1f}s ago"
+            )
+            return False
+        _LAST_RECONNECT_ATTEMPT[item_service] = now
+
+    activated = False
+
+    # First try to repair existing pool entries
+    with _ACCOUNT_POOL_LOCK:
+        matching_accounts = [a for a in account_pool if a.get('service') == item_service]
+
+    for account in matching_accounts:
+        if item_service == 'spotify':
+            session = account.get('login', {}).get('session')
+            if session and not isinstance(session, str):
+                if account.get('status') != 'active':
+                    account['status'] = 'active'
+                    activated = True
+                continue
+            try:
+                spotify_re_init_session(account, force=True)
+                activated = True
+            except Exception as e:
+                logger.error(f"Failed to reinitialize Spotify session for {account.get('username', 'unknown')}: {e}")
+        else:
+            if account.get('status') != 'active':
+                account['status'] = 'active'
+                activated = True
+
+    # If still nothing, try logging in from config
+    if not matching_accounts or not activated:
+        accounts = [
+            a for a in config.get('accounts')
+            if a.get('service') == item_service and a.get('active')
+        ]
+        for account in accounts:
+            try:
+                if item_service == 'spotify':
+                    spotify_login_user(account)
+                elif item_service == 'deezer':
+                    deezer_login_user(account)
+                elif item_service == 'qobuz':
+                    qobuz_login_user(account)
+                elif item_service == 'soundcloud':
+                    soundcloud_login_user(account)
+                elif item_service == 'apple_music':
+                    apple_music_login_user(account)
+                elif item_service == 'tidal':
+                    tidal_login_user(account)
+                elif item_service == 'crunchyroll':
+                    crunchyroll_login_user(account)
+                activated = True
+            except Exception as e:
+                logger.error(f"Failed to activate account for {item_service}: {e}")
+
+    return activated
+
+
 def get_account_token(item_service, rotate=False):
     if item_service in ('bandcamp', 'youtube_music', 'generic'):
         return
     parsing_index = config.get('active_account_number')
+    if not account_pool:
+        logger.warning(f"Account pool is empty for service: {item_service}, attempting to activate sessions")
+        _try_activate_accounts(item_service)
+        if not account_pool:
+            logger.error(f"No accounts available for service: {item_service}")
+            return None
+    if parsing_index >= len(account_pool):
+        parsing_index = 0
+        config.set('active_account_number', parsing_index)
+        config.save()
     
     def has_required_session(index):
         if item_service != 'spotify':
             return True
         return bool(account_pool[index].get('login', {}).get('session'))
     
-    # Try the primary account first if not rotating and it's active
-    if item_service == account_pool[parsing_index]['service'] and not rotate:
-        if account_pool[parsing_index].get('status') == 'active' and has_required_session(parsing_index):
-            return globals()[f"{item_service}_get_token"](parsing_index)
-        else:
-            if account_pool[parsing_index].get('status') != 'active':
-                logger.debug(f"Primary account at index {parsing_index} is not active (status: {account_pool[parsing_index].get('status')}), searching for alternative")
+    def _select_token():
+        # Try the primary account first if not rotating and it's active
+        if item_service == account_pool[parsing_index]['service'] and not rotate:
+            if account_pool[parsing_index].get('status') == 'active' and has_required_session(parsing_index):
+                return globals()[f"{item_service}_get_token"](parsing_index)
             else:
-                logger.debug(f"Primary account at index {parsing_index} missing session, searching for alternative")
-    
-    # Search for any active account of the requested service
-    for i in range(parsing_index + 1, parsing_index + len(account_pool) + 1):
-        index = i % len(account_pool)
-        if item_service == account_pool[index]['service']:
-            # Check if the account is active before using it
-            if account_pool[index].get('status') != 'active':
-                logger.debug(f"Skipping account at index {index} (status: {account_pool[index].get('status')})")
-                continue
-            if not has_required_session(index):
-                logger.debug(f"Skipping account at index {index} (missing session)")
-                continue
-            if config.get("rotate_active_account_number"):
-                logger.debug(f"Returning {account_pool[index]['service']} account number {index}: {account_pool[index]['uuid']}")
-                config.set('active_account_number', index)
-                config.save()
-            else:
-                logger.info(f"Using alternative {account_pool[index]['service']} account at index {index}: {account_pool[index]['uuid']}")
-            return globals()[f"{item_service}_get_token"](index)
-    
-    # No active account found
+                if account_pool[parsing_index].get('status') != 'active':
+                    logger.debug(f"Primary account at index {parsing_index} is not active (status: {account_pool[parsing_index].get('status')}), searching for alternative")
+                else:
+                    logger.debug(f"Primary account at index {parsing_index} missing session, searching for alternative")
+
+        # Search for any active account of the requested service
+        for i in range(parsing_index + 1, parsing_index + len(account_pool) + 1):
+            index = i % len(account_pool)
+            if item_service == account_pool[index]['service']:
+                # Check if the account is active before using it
+                if account_pool[index].get('status') != 'active':
+                    logger.debug(f"Skipping account at index {index} (status: {account_pool[index].get('status')})")
+                    continue
+                if not has_required_session(index):
+                    logger.debug(f"Skipping account at index {index} (missing session)")
+                    continue
+                if config.get("rotate_active_account_number"):
+                    logger.debug(f"Returning {account_pool[index]['service']} account number {index}: {account_pool[index]['uuid']}")
+                    config.set('active_account_number', index)
+                    config.save()
+                else:
+                    logger.info(f"Using alternative {account_pool[index]['service']} account at index {index}: {account_pool[index]['uuid']}")
+                return globals()[f"{item_service}_get_token"](index)
+        return None
+
+    token = _select_token()
+    if token:
+        return token
+
+    # No active account found - try to (re)activate accounts and retry once
+    logger.warning(f"No active account found for service: {item_service}, attempting to reactivate sessions")
+    if _try_activate_accounts(item_service):
+        token = _select_token()
+        if token:
+            return token
+
     logger.error(f"No active account found for service: {item_service}")
     return None
