@@ -231,6 +231,7 @@ def _spotify_get_app_access_token(force_rotate=False):
                     "Spotify app token request invalid credentials for client_id=%s",
                     _mask_value(client_id),
                 )
+                _backoff_spotify_credential(client_id)
                 attempts += 1
                 continue
 
