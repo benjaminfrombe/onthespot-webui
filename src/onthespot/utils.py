@@ -5,6 +5,7 @@ import platform
 import requests
 import ssl
 import subprocess
+import threading
 import time
 from hashlib import md5
 from io import BytesIO
@@ -17,6 +18,28 @@ from .otsconfig import config
 from .runtimedata import get_logger, pending, download_queue
 
 logger = get_logger("utils")
+_ENDPOINT_BACKOFF = {}
+_ENDPOINT_BACKOFF_LOCK = threading.Lock()
+
+
+def _get_endpoint_backoff(url):
+    now = time.time()
+    with _ENDPOINT_BACKOFF_LOCK:
+        until = _ENDPOINT_BACKOFF.get(url)
+        if not until:
+            return 0
+        if until <= now:
+            _ENDPOINT_BACKOFF.pop(url, None)
+            return 0
+        return int(until - now)
+
+
+def _set_endpoint_backoff(url, seconds):
+    if seconds is None or seconds <= 0:
+        return
+    until = time.time() + seconds
+    with _ENDPOINT_BACKOFF_LOCK:
+        _ENDPOINT_BACKOFF[url] = until
 
 
 class SSLAdapter(requests.adapters.HTTPAdapter):
@@ -30,6 +53,12 @@ class SSLAdapter(requests.adapters.HTTPAdapter):
 
 
 def make_call(url, params=None, headers=None, session=None, skip_cache=False, text=False, use_ssl=False, refresh_headers=None):
+    backoff_remaining = _get_endpoint_backoff(url)
+    if backoff_remaining > 0:
+        logger.warning(
+            f"Endpoint backoff active for {url}; skipping call for {backoff_remaining}s."
+        )
+        return None
     if not skip_cache:
         request_key = md5(f'{url}'.encode()).hexdigest()
         req_cache_file = os.path.join(config.get('_cache_dir'), 'reqcache', request_key + '.json')
@@ -104,13 +133,14 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
                     f"Rate limited (429) for {url} with Retry-After={wait_seconds}s; "
                     f"exceeds max {max_retry_after}s, aborting call to avoid long stall."
                 )
+                _set_endpoint_backoff(url, max_retry_after)
                 return None
+            _set_endpoint_backoff(url, wait_seconds)
             logger.warning(
-                f"Rate limited (429) for {url}. Retrying in {wait_seconds}s "
-                f"(attempt {attempt + 1}/{max_attempts})."
+                f"Rate limited (429) for {url}. Backing off for {wait_seconds}s "
+                f"(attempt {attempt + 1}/{max_attempts}); skipping immediate retry."
             )
-            time.sleep(max(0, wait_seconds))
-            continue
+            return None
 
         logger.info(f"Request status error {response.status_code}: {url}")
         return None

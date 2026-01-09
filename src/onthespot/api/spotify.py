@@ -1593,17 +1593,16 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
             auth_source,
         )
     else:
-        market_param = "EU"
+        market_param = "none"
         track_data = _spotify_make_call_with_headers(
-            f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
+            f'{BASE_URL}/tracks?ids={item_id}',
             token,
             "track metadata",
             headers,
             auth_source,
         )
         if not track_data or track_data.get('tracks', [{}])[0].get('is_playable') is False:
-            logger.info("Spotify track metadata EU unavailable for %s; falling back to US", item_id)
-            market_param = "US"
+            market_param = "EU"
             track_data = _spotify_make_call_with_headers(
                 f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
                 token,
@@ -1611,6 +1610,16 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
                 headers,
                 auth_source,
             )
+            if not track_data or track_data.get('tracks', [{}])[0].get('is_playable') is False:
+                logger.info("Spotify track metadata EU unavailable for %s; falling back to US", item_id)
+                market_param = "US"
+                track_data = _spotify_make_call_with_headers(
+                    f'{BASE_URL}/tracks?ids={item_id}&market={market_param}',
+                    token,
+                    "track metadata",
+                    headers,
+                    auth_source,
+                )
     if not track_data:
         logger.error(
             "Spotify track metadata request failed (%s, market=%s) for %s",

@@ -8,8 +8,19 @@ services:
       - HOME=/config
       - PYTHONDONTWRITEBYTECODE=1
     ports:
-     - 5555:5000
+     - 5556:5000
     volumes:
     - ./src/onthespot:/app/venv/lib/python3.14/site-packages/onthespot
     - /data/ogg:/data/ogg
     - /data/config/onthespot:/config
+ onthespot-ui:
+    image: nginx:alpine
+    container_name: onthespot-ui
+    restart: unless-stopped
+    depends_on:
+     - onthespot-webui
+    ports:
+     - 5555:80
+    volumes:
+     - ./ui:/usr/share/nginx/html:ro
+     - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro

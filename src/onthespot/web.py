@@ -41,6 +41,7 @@ from .utils import format_bytes
 logger = get_logger("web")
 _restart_lock = threading.Lock()
 _restart_in_progress = False
+_APP_START_TIME = time.time()
 
 
 def _load_config_data():
@@ -185,6 +186,14 @@ def _maybe_refresh_spotify_session():
 @app.before_request
 def _pre_request_session_check():
     _maybe_refresh_spotify_session()
+
+
+@app.get("/api/health")
+def api_health():
+    return jsonify(
+        status="ok",
+        uptime_seconds=int(time.time() - _APP_START_TIME),
+    )
 
 
 class QueueWorker(threading.Thread):
