@@ -520,6 +520,25 @@
         }
 
         /* Title popup */
+        .title-popup-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, backdrop-filter 0.2s ease, -webkit-backdrop-filter 0.2s ease;
+            z-index: 10000;
+        }
+
+        .title-popup-backdrop.visible {
+            opacity: 1;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+        }
+
         .title-popup {
             position: fixed;
             top: 50%;
@@ -532,7 +551,8 @@
             border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 12px;
             padding: 20px;
-            max-width: 80vw;
+            width: min(920px, 92vw);
+            max-height: 80vh;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
             transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
@@ -547,8 +567,101 @@
             color: white;
             font-size: 16px;
             font-weight: 500;
-            text-align: center;
+            text-align: left;
             word-wrap: break-word;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .title-popup-header {
+            text-align: left;
+        }
+
+        .title-popup-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .title-popup-sub {
+            font-size: 13px;
+            color: #bdbdbd;
+            margin-top: 4px;
+        }
+
+        .title-popup-body {
+            overflow-y: auto;
+            max-height: 55vh;
+            padding-right: 6px;
+        }
+
+        .title-popup-body::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .title-popup-body::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 999px;
+        }
+
+        .title-popup-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 8px;
+        }
+
+        .title-popup-item {
+            display: grid;
+            grid-template-columns: 32px 1fr;
+            gap: 10px;
+            align-items: baseline;
+            padding: 6px 8px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .title-popup-index {
+            color: #7dd3a8;
+            font-weight: 600;
+            font-size: 12px;
+            text-align: right;
+        }
+
+        .title-popup-track {
+            text-align: left;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .title-popup-artist {
+            font-size: 12px;
+            color: #a3a3a3;
+        }
+
+        .title-popup-loading {
+            color: #cfcfcf;
+            font-size: 14px;
+            padding: 8px 4px;
+        }
+
+        .title-popup-footer {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+
+        .title-popup-footer .download-action-button {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: #0b1a0f;
+            border: 1px solid rgba(34, 197, 94, 0.6);
+            font-weight: 700;
+        }
+
+        .title-popup-footer .download-action-button:hover {
+            background: linear-gradient(135deg, #2bd36b 0%, #18b253 100%);
         }
 
         /* ============= RESPONSIVE BREAKPOINTS ============= */
@@ -675,6 +788,7 @@
     </style>
 </head>
 <body>
+    <div id="connection-banner" class="connection-banner hidden">Backend disconnected — reconnecting…</div>
     <div class="header">
         <ul>
             <li><a class="active" href="/search">Search</a></li>
@@ -794,6 +908,7 @@
     </div>
 
     <!-- Title popup -->
+    <div id="title-popup-backdrop" class="title-popup-backdrop"></div>
     <div id="title-popup" class="title-popup">
         <div class="title-popup-content"></div>
     </div>
@@ -912,36 +1027,121 @@
 
         // ============= TITLE POPUP FUNCTIONS =============
         let titlePopupVisible = false;
+        let currentTitleItem = null;
 
-        function toggleTitlePopup(title) {
+        function toggleTitlePopup(item) {
             if (titlePopupVisible) {
                 hideTitlePopup();
             } else {
-                showTitlePopup(title);
+                showTitlePopup(item);
             }
         }
 
-        function showTitlePopup(title) {
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function showTitlePopup(item) {
             const popup = document.getElementById('title-popup');
+            const backdrop = document.getElementById('title-popup-backdrop');
             const content = popup.querySelector('.title-popup-content');
-            content.textContent = title;
+            const itemName = item && item.item_name ? item.item_name : '';
+            const itemBy = item && item.item_by ? item.item_by : '';
+            const itemType = item && item.item_type ? item.item_type : '';
+            const itemService = item && item.item_service ? item.item_service : '';
+            const itemId = item && item.item_id ? item.item_id : '';
+            currentTitleItem = item;
+
+            content.innerHTML = `
+                <div class="title-popup-header">
+                    <div class="title-popup-title">${escapeHtml(itemName)}</div>
+                    <div class="title-popup-sub">${escapeHtml(itemBy)}</div>
+                </div>
+                <div class="title-popup-body">
+                    <div class="title-popup-loading">Loading track list…</div>
+                </div>
+                <div class="title-popup-footer">
+                    <button class="download-action-button" onclick="downloadTitlePopupItem()">Download</button>
+                </div>
+            `;
             popup.classList.add('visible');
+            if (backdrop) {
+                backdrop.classList.add('visible');
+            }
             titlePopupVisible = true;
 
-            // Auto-hide after 3 seconds on touch devices
-            if (isTouchDevice) {
-                setTimeout(() => {
-                    if (titlePopupVisible) {
-                        hideTitlePopup();
-                    }
-                }, 3000);
+            if (itemType === 'album' || itemType === 'playlist') {
+                const params = new URLSearchParams({
+                    service: itemService,
+                    type: itemType,
+                    id: itemId,
+                });
+                fetch(`/api/search_item_tracks?${params.toString()}`)
+                    .then((resp) => resp.json())
+                    .then((data) => {
+                        const body = popup.querySelector('.title-popup-body');
+                        if (!body) return;
+                        if (!data || data.success === false) {
+                            body.innerHTML = '<div class="title-popup-loading">No track list available.</div>';
+                            return;
+                        }
+                        const tracks = data.tracks || [];
+                        if (tracks.length === 0) {
+                            body.innerHTML = '<div class="title-popup-loading">No track list available.</div>';
+                            return;
+                        }
+                        const itemsHtml = tracks.map(track => {
+                            const trackNumber = track.track_number || '';
+                            const trackName = track.name || '';
+                            const trackArtists = track.artists || '';
+                            return `
+                                <li class="title-popup-item">
+                                    <div class="title-popup-index">${escapeHtml(trackNumber)}</div>
+                                    <div>
+                                        <div class="title-popup-track">${escapeHtml(trackName)}</div>
+                                        <div class="title-popup-artist">${escapeHtml(trackArtists)}</div>
+                                    </div>
+                                </li>
+                            `;
+                        }).join('');
+                        body.innerHTML = `<ul class="title-popup-list">${itemsHtml}</ul>`;
+                    })
+                    .catch(() => {
+                        const body = popup.querySelector('.title-popup-body');
+                        if (body) {
+                            body.innerHTML = '<div class="title-popup-loading">No track list available.</div>';
+                        }
+                    });
+            } else {
+                const body = popup.querySelector('.title-popup-body');
+                if (body) {
+                    body.innerHTML = '<div class="title-popup-loading">Track list not available for this item.</div>';
+                }
             }
         }
 
         function hideTitlePopup() {
             const popup = document.getElementById('title-popup');
+            const backdrop = document.getElementById('title-popup-backdrop');
             popup.classList.remove('visible');
+            if (backdrop) {
+                backdrop.classList.remove('visible');
+            }
             titlePopupVisible = false;
+        }
+
+        function downloadTitlePopupItem() {
+            if (!currentTitleItem || !currentTitleItem.item_url) {
+                showToast('Missing item URL', 'error');
+                return;
+            }
+            handleDownload(currentTitleItem.item_url);
         }
 
         function showLoading() {
@@ -1118,13 +1318,11 @@
                 nameCell.textContent = item.item_name;
                 nameCell.title = item.item_name;
 
-                // Add click listener for touch devices to show full title
-                if (isTouchDevice) {
-                    nameCell.style.cursor = 'pointer';
-                    nameCell.addEventListener('click', () => {
-                        toggleTitlePopup(item.item_name);
-                    });
-                }
+                // Add click listener to show details popup
+                nameCell.style.cursor = 'pointer';
+                nameCell.addEventListener('click', () => {
+                    toggleTitlePopup(item);
+                });
 
                 row.appendChild(nameCell);
                 
@@ -1205,22 +1403,22 @@
             });
 
             // Close popups when clicking outside on touch devices
-            if (isTouchDevice) {
-                document.addEventListener('click', (e) => {
-                    const imagePopup = document.getElementById('image-preview-popup');
-                    const titlePopup = document.getElementById('title-popup');
+            document.addEventListener('click', (e) => {
+                const imagePopup = document.getElementById('image-preview-popup');
+                const titlePopup = document.getElementById('title-popup');
+                const titleBackdrop = document.getElementById('title-popup-backdrop');
 
-                    // Close image preview if clicking outside
-                    if (imagePreviewVisible && !imagePopup.contains(e.target) && !e.target.classList.contains('item-thumbnail')) {
-                        hideImagePreview();
-                    }
+                // Close image preview if clicking outside
+                if (imagePreviewVisible && !imagePopup.contains(e.target) && !e.target.classList.contains('item-thumbnail')) {
+                    hideImagePreview();
+                }
 
-                    // Close title popup if clicking outside
-                    if (titlePopupVisible && !titlePopup.contains(e.target) && !e.target.classList.contains('item-name')) {
-                        hideTitlePopup();
-                    }
-                });
-            }
+                // Close title popup if clicking outside
+                const clickedBackdrop = titleBackdrop && titleBackdrop.contains(e.target);
+                if (titlePopupVisible && (clickedBackdrop || (!titlePopup.contains(e.target) && !e.target.classList.contains('item-name')))) {
+                    hideTitlePopup();
+                }
+            });
 
             // Restore last search state from localStorage
             const lastSearchQuery = localStorage.getItem('lastSearchQuery');
@@ -1310,6 +1508,7 @@
                 localStorage.setItem('autoRedirectToDownloads', e.target.checked);
             });
         });
+        initConnectionMonitor();
     </script>
 </body>
 </html>

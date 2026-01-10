@@ -6,13 +6,13 @@
   <title>OnTheSpot Restarting</title>
   <style>
     :root {
-      color-scheme: light;
+      color-scheme: dark;
     }
     body {
       margin: 0;
       font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-      background: #f7f3ed;
-      color: #2a2a2a;
+      background: radial-gradient(circle at top, #1b1b1f 0%, #0f0f12 55%, #0a0a0d 100%);
+      color: #e7e7ea;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -20,11 +20,11 @@
     }
     .card {
       width: min(720px, 92vw);
-      border: 1px solid #e2d9ce;
+      border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
       padding: 28px 32px;
-      background: #fffaf3;
-      box-shadow: 0 12px 30px rgba(60, 42, 20, 0.12);
+      background: rgba(22, 22, 26, 0.92);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
     }
     h1 {
       margin: 0 0 10px;
@@ -35,6 +35,7 @@
       margin: 8px 0;
       line-height: 1.5;
       font-size: 16px;
+      color: #c9c9cf;
     }
     .status {
       display: inline-flex;
@@ -42,12 +43,13 @@
       gap: 10px;
       font-weight: 600;
       margin-top: 16px;
+      color: #f0b85b;
     }
     .dot {
       width: 12px;
       height: 12px;
       border-radius: 50%;
-      background: #d9782b;
+      background: #f0b85b;
       animation: pulse 1.6s ease-in-out infinite;
     }
     @keyframes pulse {
@@ -55,7 +57,7 @@
       50% { transform: scale(1.35); opacity: 1; }
     }
     .hint {
-      color: #6a5a45;
+      color: #9c9ca3;
       font-size: 14px;
     }
   </style>
@@ -77,6 +79,8 @@
         .then((resp) => {
           if (resp.ok) {
             window.location.reload();
+          } else {
+            setTimeout(tryReload, retryMs);
           }
         })
         .catch(() => {

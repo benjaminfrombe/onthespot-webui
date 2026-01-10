@@ -6,6 +6,7 @@
         <title>OnTheSpot - Login</title>
         <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
         <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+        <script src="{{ url_for('static', filename='utils.js') }}" defer></script>
         <style>
             /* Inline overrides removed — global stylesheet will supply consistent
                login form and Plex button styling. */
@@ -36,6 +37,7 @@
         </style>
     </head>
     <body>
+        <div id="connection-banner" class="connection-banner hidden">Backend disconnected — reconnecting…</div>
         <div id="main">
             <h1>OnTheSpot - Login</h1>
             <div id="logo" class="col">
@@ -254,5 +256,8 @@
             }
         </script>
         {% endif %}
+        <script>
+            initConnectionMonitor();
+        </script>
     </body>
 </html>

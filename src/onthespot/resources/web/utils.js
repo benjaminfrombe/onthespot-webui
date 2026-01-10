@@ -96,7 +96,18 @@ function toggleVisibility() {
 }
 
 // Global toast notification system
-function showToast(message, type = 'success') {
+let _toastHideTimer = null;
+function hideToast() {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    toast.classList.remove('visible');
+    if (_toastHideTimer) {
+        clearTimeout(_toastHideTimer);
+        _toastHideTimer = null;
+    }
+}
+
+function showToast(message, type = 'success', durationMs = 3000) {
     const toast = document.getElementById('toast');
     if (!toast) {
         console.warn('Toast element not found');
@@ -107,16 +118,30 @@ function showToast(message, type = 'success') {
     const msg = toast.querySelector('.toast-message');
 
     if (icon && msg) {
-        icon.textContent = type === 'success' ? '✓' : '✕';
+        if (type === 'success') {
+            icon.textContent = '✓';
+        } else if (type === 'warning') {
+            icon.textContent = '!';
+        } else if (type === 'info') {
+            icon.textContent = 'i';
+        } else {
+            icon.textContent = '✕';
+        }
         msg.textContent = message;
     }
 
     toast.className = `toast ${type}`;
     toast.classList.add('visible');
-
-    setTimeout(() => {
-        toast.classList.remove('visible');
-    }, 3000);
+    if (_toastHideTimer) {
+        clearTimeout(_toastHideTimer);
+        _toastHideTimer = null;
+    }
+    if (durationMs > 0) {
+        _toastHideTimer = setTimeout(() => {
+            toast.classList.remove('visible');
+            _toastHideTimer = null;
+        }, durationMs);
+    }
 }
 
 // Add visual feedback to button clicks
@@ -132,4 +157,90 @@ function addButtonFeedback(button, originalText, loadingText = 'Processing...') 
         button.textContent = originalText;
         if (originalBg) button.style.background = originalBg;
     };
+}
+
+// Backend connection monitor (health poll + toast/banner)
+let _connectionMonitorInitialized = false;
+function initConnectionMonitor() {
+    if (_connectionMonitorInitialized) return;
+    _connectionMonitorInitialized = true;
+
+    const banner = document.getElementById('connection-banner');
+    if (!banner) return;
+
+    const state = {
+        down: false,
+        lastToast: 0,
+        currentMessage: '',
+    };
+
+    function setBanner(isDown) {
+        if (isDown) {
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+        }
+    }
+
+    function maybeToast(message, type) {
+        const now = Date.now();
+        if (now - state.lastToast < 4000) return;
+        state.lastToast = now;
+        showToast(message, type);
+    }
+
+    function setBackendDown(reason = 'Reconnecting…') {
+        const message = reason || 'Reconnecting…';
+        if (!state.down) {
+            state.down = true;
+            setBanner(true);
+        }
+        if (state.currentMessage !== message) {
+            state.currentMessage = message;
+            showToast(message, 'warning', 0);
+        }
+    }
+
+    function setBackendUp() {
+        if (state.down) {
+            state.down = false;
+            setBanner(false);
+            state.currentMessage = '';
+            hideToast();
+            showToast('Reconnected', 'success', 2500);
+        }
+    }
+
+    window.otsConnectionMonitor = {
+        setBackendDown,
+        setBackendUp,
+    };
+
+    function pollHealth() {
+        fetch('/__health', { cache: 'no-store' })
+            .then((resp) => {
+                if (resp.ok) {
+                    setBackendUp();
+                } else {
+                    setBackendDown('Backend restarting…');
+                }
+            })
+            .catch(() => {
+                setBackendDown('Backend restarting…');
+            })
+            .finally(() => {
+                setTimeout(pollHealth, 5000);
+            });
+    }
+
+    window.addEventListener('offline', () => setBackendDown('Browser offline'));
+    window.addEventListener('online', () => setBackendUp());
+
+    pollHealth();
+}
+
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', initConnectionMonitor);
+} else {
+    initConnectionMonitor();
 }

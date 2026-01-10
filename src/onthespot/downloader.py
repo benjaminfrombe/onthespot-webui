@@ -8,6 +8,7 @@ import traceback
 import os
 import queue
 import json
+import hashlib
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from librespot.metadata import TrackId, EpisodeId
 from yt_dlp import YoutubeDL
@@ -228,6 +229,23 @@ def _get_expected_existing_path(base_path, item_type, item_service):
             return base_path + "." + output_format
         return base_path
     return build_final_file_path(base_path, item_type, None, item_service=item_service)
+
+
+def _truncate_filename_base(base_name, ext, directory):
+    try:
+        name_limit = os.pathconf(directory or '.', 'PC_NAME_MAX')
+    except Exception:
+        name_limit = 255
+    ext_len = len(ext or '')
+    limit_no_prefix = max(1, name_limit - ext_len)
+    limit_with_prefix = max(1, name_limit - ext_len - 1)
+    limit = min(limit_no_prefix, limit_with_prefix)
+    if len(base_name) <= limit:
+        return base_name
+    digest = hashlib.md5(base_name.encode('utf-8', errors='ignore')).hexdigest()
+    if limit < 8:
+        return digest[:limit]
+    return f"{base_name[:limit - 8]}-{digest[:7]}"
 
 
 class RetryWorker:
@@ -931,17 +949,15 @@ class DownloadWorker:
                     file_path = os.path.join(dl_root, item_path)
                     directory, file_name = os.path.split(file_path)
 
-                    # Additional verification of path length limits
-                    name, ext = os.path.splitext(file_name)
-                    MAX_PATH_LENGTH = 260
-                    available_length = MAX_PATH_LENGTH - len(os.path.join(directory, ''))
-                    if len(file_name) > available_length:
-                        trim_length = available_length - len(ext)
-                        name = name[:trim_length]
-                        file_name = name + ext
-                        file_path = os.path.join(directory, file_name)
-                    
+                    expected_path = _get_expected_existing_path(file_path, item_type, item_service)
+                    expected_ext = os.path.splitext(expected_path)[1]
+                    base_name = os.path.splitext(file_name)[0]
+                    trimmed_base = _truncate_filename_base(base_name, expected_ext, directory)
+                    if trimmed_base != base_name:
+                        file_name = trimmed_base
+                        file_path = os.path.join(directory, trimmed_base)
                     temp_file_path = os.path.join(directory, '~' + file_name)
+                    expected_path = _get_expected_existing_path(file_path, item_type, item_service)
 
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
                     logger.info(f"DEBUG full file_path: {file_path}")

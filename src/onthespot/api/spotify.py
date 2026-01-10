@@ -1722,7 +1722,11 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
     info['item_url'] = track_data.get('tracks', [{}])[0].get('external_urls', {}).get('spotify')
     #info['popularity'] = track_data.get('tracks', [{}])[0].get('popularity')
     info['item_id'] = track_data.get('tracks', [{}])[0].get('id')
-    info['is_playable'] = track_data.get('tracks', [{}])[0].get('is_playable', False)
+    track_entry = track_data.get('tracks', [{}])[0]
+    if 'is_playable' in track_entry and track_entry.get('is_playable') is False:
+        info['is_playable'] = False
+    else:
+        info['is_playable'] = True
 
     if credits_data:
         credits = {}

@@ -19,7 +19,7 @@ from .api.bandcamp import bandcamp_get_track_metadata, bandcamp_login_user
 from .api.deezer import deezer_get_track_metadata, deezer_add_account, deezer_login_user
 from .api.qobuz import qobuz_get_track_metadata, qobuz_add_account, qobuz_login_user
 from .api.soundcloud import soundcloud_get_track_metadata, soundcloud_add_account, soundcloud_login_user
-from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user, spotify_re_init_session
+from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user, spotify_re_init_session, spotify_get_album_tracks_with_metadata, spotify_get_playlist_items
 from .api.tidal import tidal_get_track_metadata, tidal_login_user
 from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account, youtube_music_login_user
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account, crunchyroll_login_user
@@ -981,6 +981,51 @@ def search_results():
             'message': 'Unexpected error occurred.',
             'results': []
         })
+
+
+@app.route('/api/search_item_tracks')
+@login_required
+def search_item_tracks():
+    item_service = request.args.get('service')
+    item_type = request.args.get('type')
+    item_id = request.args.get('id')
+
+    if not item_service or not item_type or not item_id:
+        return jsonify(success=False, error='Missing parameters'), 400
+
+    if item_service != 'spotify':
+        return jsonify(success=True, tracks=[])
+
+    token = get_account_token(item_service)
+    if not token:
+        return jsonify(success=False, error='No active account')
+
+    if item_type == 'album':
+        tracks = spotify_get_album_tracks_with_metadata(token, item_id)
+        track_list = []
+        for track in tracks:
+            artists = ", ".join([artist.get('name', '') for artist in track.get('artists', []) if artist.get('name')])
+            track_list.append({
+                'track_number': track.get('track_number'),
+                'name': track.get('name', ''),
+                'artists': artists,
+            })
+        return jsonify(success=True, tracks=track_list)
+
+    if item_type == 'playlist':
+        items = spotify_get_playlist_items(token, item_id)
+        track_list = []
+        for idx, item in enumerate(items, start=1):
+            track = item.get('track') or {}
+            artists = ", ".join([artist.get('name', '') for artist in track.get('artists', []) if artist.get('name')])
+            track_list.append({
+                'track_number': idx,
+                'name': track.get('name', ''),
+                'artists': artists,
+            })
+        return jsonify(success=True, tracks=track_list)
+
+    return jsonify(success=True, tracks=[])
 
 
 @app.route('/api/clear_items', methods=['POST'])

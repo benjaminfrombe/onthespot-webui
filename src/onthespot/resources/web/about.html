@@ -9,6 +9,7 @@
         <script src="{{ url_for('static', filename='utils.js') }}"></script>
     </head>
     <body>
+        <div id="connection-banner" class="connection-banner hidden">Backend disconnected — reconnecting…</div>
         <div class="header">
             <ul>
                 <li><a href="/search">Search</a></li>
@@ -128,6 +129,7 @@
                     button.innerHTML = originalHTML;
                 }, 1500);
             }
+            initConnectionMonitor();
         </script>
 
         <!-- Toast Notification -->

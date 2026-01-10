@@ -458,6 +458,7 @@
     </style>
 </head>
 <body>
+    <div id="connection-banner" class="connection-banner hidden">Backend disconnected — reconnecting…</div>
     <div class="header">
         <ul>
             <li><a href="/search">Search</a></li>
@@ -1578,6 +1579,7 @@
         }
 
         handleServiceChange();
+        initConnectionMonitor();
     </script>
 
     <!-- Toast Notification -->

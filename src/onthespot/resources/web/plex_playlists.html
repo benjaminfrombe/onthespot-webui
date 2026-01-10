@@ -184,6 +184,7 @@
     </style>
 </head>
 <body>
+    <div id="connection-banner" class="connection-banner hidden">Backend disconnected — reconnecting…</div>
     <div class="header">
         <ul>
             <li><a href="/search">Search</a></li>
@@ -220,14 +221,14 @@
         {% if playlists|length > 0 %}
         <div class="playlists-grid" id="playlists-grid">
             {% for playlist in playlists %}
-            <div class="playlist-card" id="playlist-{{ loop.index0 }}">
+                <div class="playlist-card" id="playlist-{{ loop.index0 }}" data-playlist-path="{{ playlist.path|e }}" data-index="{{ loop.index0 }}">
                 <div class="playlist-name">{{ playlist.name }}</div>
                 <div class="playlist-path">{{ playlist.path }}</div>
                 <div class="playlist-actions">
-                    <button class="btn btn-import" onclick="importPlaylist('{{ playlist.path }}', {{ loop.index0 }})">
+                    <button class="btn btn-import" onclick="importPlaylist(this)">
                         Import to Plex
                     </button>
-                    <button class="btn btn-delete" onclick="deletePlaylist('{{ playlist.path }}', {{ loop.index0 }})">
+                    <button class="btn btn-delete" onclick="deletePlaylist(this)">
                         Delete
                     </button>
                 </div>
@@ -245,8 +246,19 @@
     </div>
 
     <script>
-        async function importPlaylist(playlistPath, index) {
-            const button = document.querySelector(`#playlist-${index} .btn-import`);
+        async function importPlaylist(buttonEl) {
+            const card = buttonEl.closest('.playlist-card');
+            if (!card) {
+                showToast('Missing playlist card', 'error');
+                return;
+            }
+            const playlistPath = card.dataset.playlistPath;
+            const index = Number(card.dataset.index);
+            if (!playlistPath) {
+                showToast('Missing playlist path', 'error');
+                return;
+            }
+            const button = card.querySelector('.btn-import');
             const statusDiv = document.getElementById(`status-${index}`);
 
             button.disabled = true;
@@ -304,8 +316,7 @@
                     continue;
                 }
 
-                const playlistPath = button.getAttribute('onclick').match(/'([^']+)'/)[1];
-                await importPlaylist(playlistPath, i);
+                await importPlaylist(button);
 
                 // Small delay between imports to avoid overwhelming the server
                 await new Promise(resolve => setTimeout(resolve, 500));
@@ -314,12 +325,22 @@
             showToast('Finished importing all playlists!', 'success');
         }
 
-        async function deletePlaylist(playlistPath, index) {
+        async function deletePlaylist(buttonEl) {
+            const card = buttonEl.closest('.playlist-card');
+            if (!card) {
+                showToast('Missing playlist card', 'error');
+                return;
+            }
+            const playlistPath = card.dataset.playlistPath;
+            const index = Number(card.dataset.index);
+            if (!playlistPath) {
+                showToast('Missing playlist path', 'error');
+                return;
+            }
             if (!confirm(`Are you sure you want to delete this playlist?\n\n${playlistPath}`)) {
                 return;
             }
 
-            const card = document.getElementById(`playlist-${index}`);
             const button = card.querySelector('.btn-delete');
             const statusDiv = document.getElementById(`status-${index}`);
 
@@ -373,6 +394,7 @@
                 showToast('Error deleting playlist: ' + e.message, 'error');
             }
         }
+        initConnectionMonitor();
     </script>
 
     <!-- Toast Notification -->
