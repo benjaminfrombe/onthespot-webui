@@ -1272,6 +1272,7 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
     params['offset'] = '0'
     params['q'] = search_term
     params['type'] = ",".join(c_type for c_type in content_types)
+    params['market'] = config.get("spotify_search_market") or "BE"
     logger.info(
         "Spotify search request auth_source=%s types=%s limit=%s",
         auth_source,

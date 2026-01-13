@@ -185,7 +185,43 @@ def _maybe_refresh_spotify_session():
 
 @app.before_request
 def _pre_request_session_check():
-    _maybe_refresh_spotify_session()
+    # Disabled proactive refresh; only refresh when sessions are actually needed.
+    return
+
+
+class SessionHealthWorker(threading.Thread):
+    def __init__(self, interval_seconds=3600):
+        super().__init__(daemon=True)
+        self.interval_seconds = interval_seconds
+        self.is_running = True
+
+    def run(self):
+        logger.info("SessionHealthWorker started (interval=%ss)", self.interval_seconds)
+        while self.is_running:
+            time.sleep(self.interval_seconds)
+            try:
+                for account in list(account_pool):
+                    if account.get('service') != 'spotify':
+                        continue
+                    username = account.get('username', 'unknown')
+                    try:
+                        token = account.get('login', {}).get('session')
+                        if not token or isinstance(token, str):
+                            raise RuntimeError("Session missing or invalid")
+                        # Touch session to verify it is alive.
+                        _ = token.get_user_attribute("type")
+                    except Exception as e:
+                        logger.warning("Spotify session check failed for %s: %s", username, e)
+                        try:
+                            spotify_re_init_session(account, force=True)
+                            logger.info("Spotify session restarted for %s", username)
+                        except Exception as restart_err:
+                            logger.error("Spotify session restart failed for %s: %s", username, restart_err)
+            except Exception as e:
+                logger.error("SessionHealthWorker error: %s", e)
+
+    def stop(self):
+        self.is_running = False
 
 
 @app.get("/api/health")
@@ -1409,6 +1445,12 @@ def main():
             retryworker = RetryWorker()
             retryworker.start()
             register_worker(retryworker)
+
+        session_worker = SessionHealthWorker(
+            interval_seconds=config.get('spotify_session_check_interval', 3600)
+        )
+        session_worker.start()
+        register_worker(session_worker)
 
         # Start watchdog worker
         watchdog_worker = WatchdogWorker()

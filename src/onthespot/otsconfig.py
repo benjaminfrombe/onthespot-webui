@@ -106,6 +106,8 @@ class Config:
             "disable_download_popups": False, # Hide download popups
             "windows_10_explorer_thumbnails": False, # Use old id3 format to support windows 10 explorer (not the standard format)
             "mirror_spotify_playback": False, # Mirror spotify playback
+            "spotify_search_market": "BE", # Spotify search market (ISO 3166-1 alpha-2)
+            "spotify_session_check_interval": 3600, # Spotify session health check interval (seconds)
             "close_to_tray": False, # Close application to tray
             "check_for_updates": True, # Check for updates
             "illegal_character_replacement": "-", # Character used to replace illegal characters or values in path

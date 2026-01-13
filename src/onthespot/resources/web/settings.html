@@ -741,6 +741,16 @@
                     <small>Cooldown applied to a client ID after rate limit (429).</small>
                 </div>
                 <div class="setting-row">
+                    <label for="spotify_search_market">Spotify Search Market</label>
+                    <input type="text" id="spotify_search_market" value="{{ config.spotify_search_market }}" placeholder="BE">
+                    <small>Two-letter country code (ISO 3166-1 alpha-2). Example: BE, NL, US.</small>
+                </div>
+                <div class="setting-row">
+                    <label for="spotify_session_check_interval">Spotify Session Check Interval (seconds)</label>
+                    <input type="number" id="spotify_session_check_interval" value="{{ config.spotify_session_check_interval }}">
+                    <small>How often to validate Spotify sessions and restart if needed.</small>
+                </div>
+                <div class="setting-row">
                     <label for="check_for_updates">Check for Updates</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="check_for_updates" {% if config.check_for_updates %}checked{% endif %}>
@@ -1410,6 +1420,8 @@
                 spotify_client_secret: document.getElementById('spotify_client_secret').value,
                 spotify_client_credentials: readSpotifyClientCredentials(),
                 spotify_client_backoff_seconds: document.getElementById('spotify_client_backoff_seconds').value,
+                spotify_search_market: document.getElementById('spotify_search_market').value.trim().toUpperCase(),
+                spotify_session_check_interval: document.getElementById('spotify_session_check_interval').value,
                 close_to_tray: document.getElementById('close_to_tray').checked,
                 check_for_updates: document.getElementById('check_for_updates').checked,
                 illegal_character_replacement: document.getElementById('illegal_character_replacement').value,
