@@ -6,6 +6,7 @@ import threading
 import time
 import traceback
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import queue
 import json
 import hashlib
@@ -35,6 +36,19 @@ _METADATA_CACHE_LOCK = threading.Lock()
 _EXISTING_FILE_CACHE = None
 _EXISTING_FILE_CACHE_LOCK = threading.Lock()
 _EXISTING_FILE_CACHE_VERSION = 1
+_METADATA_TIMEOUT_SENTINEL = object()
+
+
+def _call_with_timeout(func, timeout_seconds, description):
+    if not timeout_seconds or timeout_seconds <= 0:
+        return func()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            logger.error(f"{description} timed out after {timeout_seconds}s")
+            return _METADATA_TIMEOUT_SENTINEL
 
 
 def _load_metadata_migration():
@@ -419,6 +433,19 @@ class DownloadWorker:
                     download_queue[local_id]['item_status'] = status
                     download_queue[local_id]['last_update_time'] = current_time
 
+    def _mark_item_unavailable(self, item, local_id, reason):
+        logger.error(f"Marking item unavailable: {local_id} ({reason})")
+        item['item_status'] = 'Unavailable'
+        item['progress'] = 0
+        item['last_update_time'] = time.time()
+        item['available'] = True
+        with download_queue_lock:
+            if local_id in download_queue:
+                download_queue[local_id]['item_status'] = 'Unavailable'
+                download_queue[local_id]['progress'] = 0
+                download_queue[local_id]['last_update_time'] = time.time()
+                download_queue[local_id]['available'] = True
+
 
     def yt_dlp_progress_hook(self, item, d):
         progress = item.get('progress', 0)
@@ -507,6 +534,8 @@ class DownloadWorker:
                 try:
                     stream = token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(quality), False, None)
                     logger.info(f"Successfully got stream from account index {current_account_idx}")
+                    if item_type == "track":
+                        account_pool[current_account_idx]['last_track_id'] = item_id
                     return stream, token, current_account_idx
                 except (RuntimeError, OSError, queue.Empty) as e:
                     error_str = str(e)
@@ -568,6 +597,8 @@ class DownloadWorker:
                     try:
                         stream = fallback_token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(fallback_quality), False, None)
                         logger.info(f"Successfully got stream from fallback account index {account_idx}")
+                        if item_type == "track":
+                            account_pool[account_idx]['last_track_id'] = item_id
                         return stream, fallback_token, account_idx
                     except (RuntimeError, OSError, queue.Empty) as e:
                         error_str = str(e)
@@ -741,6 +772,7 @@ class DownloadWorker:
                 else:
                     max_metadata_retries = config.get("metadata_retry_max_attempts", 3)
                     metadata_retry_delay = config.get("metadata_retry_delay", 2)
+                    metadata_timeout = config.get("metadata_fetch_timeout", 45)
                     metadata_attempt = 0
                     metadata_failed = False
 
@@ -839,10 +871,22 @@ class DownloadWorker:
                                             album_download_locks[album_key] = threading.Lock()
                                         album_lock_ctx = album_download_locks[album_key]
                                 
-                                if album_lock_ctx:
-                                    item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
-                                else:
-                                    item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                                def _fetch_metadata():
+                                    if album_lock_ctx:
+                                        return globals()[f"{item_service}_get_{item_type}_metadata"](
+                                            token, item_id, album_lock=album_lock_ctx
+                                        )
+                                    return globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+
+                                item_metadata = _call_with_timeout(
+                                    _fetch_metadata,
+                                    metadata_timeout,
+                                    f"Metadata fetch for {item_service} {item_id}",
+                                )
+                                if item_metadata is _METADATA_TIMEOUT_SENTINEL:
+                                    self._mark_item_unavailable(item, local_id, "metadata fetch timeout")
+                                    metadata_failed = True
+                                    break
 
                                 if not item_metadata or not item_metadata.get('title'):
                                     raise RuntimeError("Metadata fetch returned empty response")
@@ -881,10 +925,22 @@ class DownloadWorker:
                                             album_download_locks[album_key] = threading.Lock()
                                         album_lock_ctx = album_download_locks[album_key]
                                 
-                                if album_lock_ctx:
-                                    item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id, album_lock=album_lock_ctx)
-                                else:
-                                    item_metadata = globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+                                def _fetch_metadata():
+                                    if album_lock_ctx:
+                                        return globals()[f"{item_service}_get_{item_type}_metadata"](
+                                            token, item_id, album_lock=album_lock_ctx
+                                        )
+                                    return globals()[f"{item_service}_get_{item_type}_metadata"](token, item_id)
+
+                                item_metadata = _call_with_timeout(
+                                    _fetch_metadata,
+                                    metadata_timeout,
+                                    f"Metadata fetch for {item_service} {item_id}",
+                                )
+                                if item_metadata is _METADATA_TIMEOUT_SENTINEL:
+                                    self._mark_item_unavailable(item, local_id, "metadata fetch timeout")
+                                    metadata_failed = True
+                                    break
                             break
                         except (Exception, KeyError) as e:
                             metadata_attempt += 1

@@ -19,7 +19,7 @@ from .api.bandcamp import bandcamp_get_track_metadata, bandcamp_login_user
 from .api.deezer import deezer_get_track_metadata, deezer_add_account, deezer_login_user
 from .api.qobuz import qobuz_get_track_metadata, qobuz_add_account, qobuz_login_user
 from .api.soundcloud import soundcloud_get_track_metadata, soundcloud_add_account, soundcloud_login_user
-from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user, spotify_re_init_session, spotify_get_album_tracks_with_metadata, spotify_get_playlist_items
+from .api.spotify import MirrorSpotifyPlayback, spotify_new_session, spotify_get_track_metadata, spotify_get_podcast_episode_metadata, spotify_login_user, spotify_re_init_session, spotify_warm_session, spotify_get_album_tracks_with_metadata, spotify_get_playlist_items
 from .api.tidal import tidal_get_track_metadata, tidal_login_user
 from .api.youtube_music import youtube_music_get_track_metadata, youtube_music_add_account, youtube_music_login_user
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_add_account, crunchyroll_login_user
@@ -205,16 +205,22 @@ class SessionHealthWorker(threading.Thread):
                         continue
                     username = account.get('username', 'unknown')
                     try:
-                        token = account.get('login', {}).get('session')
-                        if not token or isinstance(token, str):
-                            raise RuntimeError("Session missing or invalid")
-                        # Touch session to verify it is alive.
-                        _ = token.get_user_attribute("type")
-                    except Exception as e:
-                        logger.warning("Spotify session check failed for %s: %s", username, e)
+                        track_id = account.get('last_track_id')
+                        if track_id:
+                            spotify_warm_session(account, track_id)
+                            logger.info("Spotify session keep-alive warm for %s", username)
+                        else:
+                            spotify_re_init_session(account, force=True)
+                            logger.info("Spotify session keep-alive refresh for %s", username)
+                    except Exception as warm_err:
+                        logger.warning("Spotify session warm failed for %s: %s", username, warm_err)
                         try:
                             spotify_re_init_session(account, force=True)
                             logger.info("Spotify session restarted for %s", username)
+                            track_id = account.get('last_track_id')
+                            if track_id:
+                                spotify_warm_session(account, track_id)
+                                logger.info("Spotify session post-restart warm for %s", username)
                         except Exception as restart_err:
                             logger.error("Spotify session restart failed for %s: %s", username, restart_err)
             except Exception as e:
@@ -1215,6 +1221,20 @@ def debug_queue_status():
             'batch_queue_elapsed': time.time() - batch_queue_time if batch_queue_time else None
         }
     })
+
+
+@app.route('/api/debug/mark_unavailable/<path:local_id>', methods=['POST'])
+@login_required
+def debug_mark_unavailable(local_id):
+    with download_queue_lock:
+        item = download_queue.get(local_id)
+        if not item:
+            return jsonify({'success': False, 'error': 'not_found'}), 404
+        item['item_status'] = 'Unavailable'
+        item['progress'] = 0
+        item['last_update_time'] = time.time()
+        item['available'] = True
+    return jsonify({'success': True, 'local_id': local_id})
 
 
 @app.route('/api/parse_url/<path:url>', methods=['POST'])

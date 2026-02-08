@@ -696,6 +696,39 @@ def spotify_re_init_session(account, max_retries=4, force=False):
     raise RuntimeError(f"Failed to recreate session for {username} after {max_retries} attempts: {last_error}")
 
 
+def spotify_warm_session(account, track_id):
+    from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
+    from librespot.metadata import TrackId
+
+    token = account.get('login', {}).get('session')
+    if not token or isinstance(token, str):
+        raise RuntimeError("Session missing or invalid")
+    if not track_id:
+        raise RuntimeError("No track ID available for warm-up")
+
+    audio_key = TrackId.from_base62(track_id)
+    # librespot's AudioQuality enum differs across versions. Prefer "MEDIUM" if
+    # present (older forks), otherwise fall back to "NORMAL" (current upstream).
+    quality = getattr(AudioQuality, "MEDIUM", None) or getattr(AudioQuality, "NORMAL", None)
+    if quality is None:
+        # Defensive fallback: keep the warm-up from crashing even if the enum changes again.
+        quality = AudioQuality.HIGH
+    stream = token.content_feeder().load(
+        audio_key,
+        VorbisOnlyAudioQuality(quality),
+        False,
+        None,
+    )
+    try:
+        if hasattr(stream, "close"):
+            stream.close()
+        elif hasattr(stream, "stream") and hasattr(stream.stream, "close"):
+            stream.stream.close()
+    except Exception:
+        pass
+    return True
+
+
 def spotify_get_token(parsing_index):
     """
     Get Spotify session token.
