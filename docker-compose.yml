@@ -1,7 +1,7 @@
 services:
  onthespot-webui:
     image: onthespot-librespotpatch:latest
-    container_name: onthespot-webui
+    container_name: onthespot-backend
     restart: unless-stopped
     user: 1000:1000
     environment:

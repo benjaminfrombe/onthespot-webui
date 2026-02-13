@@ -6,7 +6,6 @@ import threading
 import time
 import traceback
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import queue
 import json
 import hashlib
@@ -42,13 +41,28 @@ _METADATA_TIMEOUT_SENTINEL = object()
 def _call_with_timeout(func, timeout_seconds, description):
     if not timeout_seconds or timeout_seconds <= 0:
         return func()
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func)
+    result_holder = {}
+    error_holder = {}
+
+    def _runner():
         try:
-            return future.result(timeout=timeout_seconds)
-        except FutureTimeoutError:
-            logger.error(f"{description} timed out after {timeout_seconds}s")
-            return _METADATA_TIMEOUT_SENTINEL
+            result_holder['result'] = func()
+        except Exception as e:
+            error_holder['error'] = e
+
+    # Daemon thread ensures a hung metadata call cannot block queue progress.
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join(timeout_seconds)
+
+    if worker.is_alive():
+        logger.error(f"{description} timed out after {timeout_seconds}s")
+        return _METADATA_TIMEOUT_SENTINEL
+
+    if 'error' in error_holder:
+        raise error_holder['error']
+
+    return result_holder.get('result')
 
 
 def _load_metadata_migration():
@@ -884,9 +898,7 @@ class DownloadWorker:
                                     f"Metadata fetch for {item_service} {item_id}",
                                 )
                                 if item_metadata is _METADATA_TIMEOUT_SENTINEL:
-                                    self._mark_item_unavailable(item, local_id, "metadata fetch timeout")
-                                    metadata_failed = True
-                                    break
+                                    raise RuntimeError("Metadata fetch timed out")
 
                                 if not item_metadata or not item_metadata.get('title'):
                                     raise RuntimeError("Metadata fetch returned empty response")
@@ -938,9 +950,7 @@ class DownloadWorker:
                                     f"Metadata fetch for {item_service} {item_id}",
                                 )
                                 if item_metadata is _METADATA_TIMEOUT_SENTINEL:
-                                    self._mark_item_unavailable(item, local_id, "metadata fetch timeout")
-                                    metadata_failed = True
-                                    break
+                                    raise RuntimeError("Metadata fetch timed out")
                             break
                         except (Exception, KeyError) as e:
                             metadata_attempt += 1
