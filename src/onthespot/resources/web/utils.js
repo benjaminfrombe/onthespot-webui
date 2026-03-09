@@ -244,3 +244,39 @@ if (document.readyState === 'loading') {
 } else {
     initConnectionMonitor();
 }
+
+// Global system notification poller (e.g. Plex scan completion)
+let _notificationPollerInitialized = false;
+function initNotificationPoller() {
+    if (_notificationPollerInitialized) return;
+    _notificationPollerInitialized = true;
+    window.otsNotificationPollerActive = true;
+
+    // Skip polling on login page to avoid unnecessary unauthorized requests.
+    if (window.location.pathname === '/login') return;
+
+    function fetchNotifications() {
+        fetch('/api/notifications')
+            .then((response) => {
+                if (!response.ok) return null;
+                return response.json();
+            })
+            .then((data) => {
+                if (!data || !Array.isArray(data.notifications)) return;
+                data.notifications.forEach((notif) => {
+                    if (!notif || !notif.message) return;
+                    showToast(notif.message, notif.type || 'info');
+                });
+            })
+            .catch(() => {});
+    }
+
+    fetchNotifications();
+    setInterval(fetchNotifications, 2000);
+}
+
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', initNotificationPoller);
+} else {
+    initNotificationPoller();
+}

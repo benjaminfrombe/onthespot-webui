@@ -1577,8 +1577,10 @@
                 });
         }
         
-        // Poll notifications every 2 seconds
-        setInterval(fetchNotifications, 2000);
+        // Poll notifications every 2 seconds unless global poller is active.
+        if (!window.otsNotificationPollerActive) {
+            setInterval(fetchNotifications, 2000);
+        }
 
         // ============= API ACTIONS =============
         function clearItems() {
