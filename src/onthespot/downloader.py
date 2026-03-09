@@ -24,7 +24,7 @@ from .api.youtube_music import youtube_music_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_get_decryption_key, crunchyroll_get_mpd_info, crunchyroll_close_stream
 from .api.generic import generic_get_track_metadata
 from .otsconfig import config
-from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, increment_failure_count, reset_failure_count, album_download_locks, album_download_locks_lock
+from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, increment_failure_count, reset_failure_count, album_download_locks, album_download_locks_lock, trigger_worker_restart
 from . import runtimedata
 from .utils import format_item_path, convert_audio_format, embed_metadata, set_music_thumbnail, fix_mp3_metadata, add_to_m3u_file, strip_metadata, convert_video_format
 
@@ -36,9 +36,13 @@ _EXISTING_FILE_CACHE = None
 _EXISTING_FILE_CACHE_LOCK = threading.Lock()
 _EXISTING_FILE_CACHE_VERSION = 1
 _METADATA_TIMEOUT_SENTINEL = object()
+_METADATA_TIMEOUT_RESTART_THRESHOLD = 2
+_metadata_timeout_streak = 0
+_metadata_timeout_lock = threading.Lock()
 
 
 def _call_with_timeout(func, timeout_seconds, description):
+    global _metadata_timeout_streak
     if not timeout_seconds or timeout_seconds <= 0:
         return func()
     result_holder = {}
@@ -57,10 +61,31 @@ def _call_with_timeout(func, timeout_seconds, description):
 
     if worker.is_alive():
         logger.error(f"{description} timed out after {timeout_seconds}s")
+        if "Metadata fetch" in description:
+            with _metadata_timeout_lock:
+                _metadata_timeout_streak += 1
+                current_streak = _metadata_timeout_streak
+            logger.error(
+                "Metadata timeout streak: %s/%s",
+                current_streak,
+                _METADATA_TIMEOUT_RESTART_THRESHOLD,
+            )
+            if current_streak >= _METADATA_TIMEOUT_RESTART_THRESHOLD:
+                logger.error(
+                    "Metadata timed out %s consecutive times; triggering hard backend restart.",
+                    current_streak,
+                )
+                with _metadata_timeout_lock:
+                    _metadata_timeout_streak = 0
+                trigger_worker_restart()
         return _METADATA_TIMEOUT_SENTINEL
 
     if 'error' in error_holder:
         raise error_holder['error']
+
+    if "Metadata fetch" in description:
+        with _metadata_timeout_lock:
+            _metadata_timeout_streak = 0
 
     return result_holder.get('result')
 
@@ -274,6 +299,24 @@ def _truncate_filename_base(base_name, ext, directory):
     if limit < 8:
         return digest[:limit]
     return f"{base_name[:limit - 8]}-{digest[:7]}"
+
+
+def _build_existing_file_cache_key(item_service, item_type, item_id, item):
+    """Build cache key for existing-file lookups.
+
+    For playlist items, include playlist context so a track existing in another
+    playlist/album path does not incorrectly short-circuit this playlist entry.
+    """
+    parent_category = item.get('parent_category')
+    if parent_category == 'playlist':
+        playlist_name = item.get('playlist_name') or ''
+        playlist_by = item.get('playlist_by') or ''
+        playlist_number = item.get('playlist_number') or ''
+        return (
+            f"{item_service}:{item_type}:{item_id}:playlist:"
+            f"{playlist_name}:{playlist_by}:{playlist_number}"
+        )
+    return f"{item_service}:{item_type}:{item_id}"
 
 
 class RetryWorker:
@@ -748,12 +791,19 @@ class DownloadWorker:
                 # Get token first (needed for metadata fetch)
                 token = get_account_token(item_service, rotate=config.get("rotate_active_account_number"))
                 account_index = self._find_account_index(item_service, token) if token else None
-                cache_key = f"{item_service}:{item_type}:{item_id}"
+                metadata_cache_key = f"{item_service}:{item_type}:{item_id}"
+                existing_file_cache_key = _build_existing_file_cache_key(
+                    item_service, item_type, item_id, item
+                )
 
-                cached_path = _get_existing_file_cache_entry(cache_key)
+                cached_path = _get_existing_file_cache_entry(existing_file_cache_key)
                 if cached_path:
                     if os.path.isfile(cached_path):
-                        item_metadata = item.get('cached_metadata') or _get_metadata_cache_entry(cache_key) or {}
+                        item_metadata = (
+                            item.get('cached_metadata')
+                            or _get_metadata_cache_entry(metadata_cache_key)
+                            or {}
+                        )
                         if item_metadata:
                             with download_queue_lock:
                                 if local_id in download_queue:
@@ -767,10 +817,17 @@ class DownloadWorker:
                                     download_queue[local_id]['cached_metadata'] = item_metadata
                                     item.update(download_queue[local_id])
                         logger.info(f"Existing file cache hit for '{item_id}': {cached_path}")
-                        self._finalize_existing_item(item, item_metadata, cached_path, account_index, item_id, cache_key)
+                        self._finalize_existing_item(
+                            item,
+                            item_metadata,
+                            cached_path,
+                            account_index,
+                            item_id,
+                            existing_file_cache_key,
+                        )
                         continue
                     logger.info(f"Existing file cache stale for '{item_id}': {cached_path}")
-                    _clear_existing_file_cache_entry(cache_key)
+                    _clear_existing_file_cache_entry(existing_file_cache_key)
 
                 # FETCH METADATA FIRST (before setting status to Downloading)
                 # This ensures GUI shows real track name when download starts
@@ -786,15 +843,15 @@ class DownloadWorker:
                 else:
                     max_metadata_retries = config.get("metadata_retry_max_attempts", 3)
                     metadata_retry_delay = config.get("metadata_retry_delay", 2)
-                    metadata_timeout = config.get("metadata_fetch_timeout", 45)
+                    metadata_timeout = config.get("metadata_fetch_timeout", 5)
                     metadata_attempt = 0
                     metadata_failed = False
 
                     while metadata_attempt < max_metadata_retries:
                         try:
                             if item.get('needs_metadata_fetch'):
-                                cache_key = f"{item_service}:{item_type}:{item_id}"
-                                cached_metadata = _get_metadata_cache_entry(cache_key)
+                                metadata_cache_key = f"{item_service}:{item_type}:{item_id}"
+                                cached_metadata = _get_metadata_cache_entry(metadata_cache_key)
                                 if cached_metadata:
                                     item_metadata = cached_metadata
                                     if item.get('parent_category') == 'playlist':
@@ -869,7 +926,7 @@ class DownloadWorker:
 
                                         logger.info(f"Metadata restored from migration cache: {item_metadata.get('title')} by {item_metadata.get('artists')}")
                                         self.update_progress(item, "Waiting", 0)
-                                        _set_metadata_cache_entry(cache_key, item_metadata)
+                                        _set_metadata_cache_entry(metadata_cache_key, item_metadata)
                                         time.sleep(0.1)
                                         break
 
@@ -924,7 +981,7 @@ class DownloadWorker:
                                 logger.info(f"Metadata fetched: {item_metadata.get('title')} by {item_metadata.get('artists')}")
                                 # Update status to Waiting to trigger websocket broadcast with new metadata
                                 self.update_progress(item, "Waiting", 0)
-                                _set_metadata_cache_entry(cache_key, item_metadata)
+                                _set_metadata_cache_entry(metadata_cache_key, item_metadata)
                                 # Small delay to ensure websocket broadcasts the metadata update before we start downloading
                                 time.sleep(0.1)
                             else:
@@ -1037,7 +1094,15 @@ class DownloadWorker:
                         expected_path = _get_expected_existing_path(file_path, item_type, item_service)
                         logger.info(f"Checking for existing file at expected path: {expected_path}")
                         if os.path.isfile(expected_path):
-                            self._finalize_existing_item(item, item_metadata, expected_path, account_index, item_id, cache_key, target_filename=target_filename)
+                            self._finalize_existing_item(
+                                item,
+                                item_metadata,
+                                expected_path,
+                                account_index,
+                                item_id,
+                                existing_file_cache_key,
+                                target_filename=target_filename,
+                            )
 
                 if item['item_status'] == 'Already Exists':
                     continue
@@ -1934,7 +1999,7 @@ class DownloadWorker:
                 self.update_progress(item, "Downloaded", 100)
                 reset_failure_count(account_index)  # Reset failure counter on successful download
                 if item.get('file_path'):
-                    _set_existing_file_cache_entry(cache_key, item['file_path'])
+                    _set_existing_file_cache_entry(existing_file_cache_key, item['file_path'])
                 
                 # Track completed playlist item and write M3U if playlist is complete
                 if config.get('create_m3u_file') and item.get('parent_category') == 'playlist':
