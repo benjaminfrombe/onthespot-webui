@@ -111,6 +111,29 @@ def trigger_hard_restart(reason):
     logger.error(f"🔄 HARD RESTART INITIATED: {reason}")
     logger.error("="*80)
 
+    # Prefer a different Spotify account after restart to avoid immediately
+    # retrying restored queue items on the same potentially bad session.
+    try:
+        current_index = config.get('active_account_number')
+        if account_pool and 0 <= current_index < len(account_pool):
+            next_index = None
+            for offset in range(1, len(account_pool) + 1):
+                candidate = (current_index + offset) % len(account_pool)
+                account = account_pool[candidate]
+                if (
+                    account.get('service') == 'spotify'
+                    and account.get('active', True)
+                    and account.get('status') == 'active'
+                ):
+                    next_index = candidate
+                    break
+            if next_index is not None and next_index != current_index:
+                config.set('active_account_number', next_index)
+                config.save()
+                logger.info(f"Rotated active account for restart: {current_index} -> {next_index}")
+    except Exception as e:
+        logger.error(f"Failed to rotate active account before hard restart: {e}")
+
     # Notify web clients so the UI can show a reconnecting state immediately.
     try:
         if 'socketio' in globals():
@@ -450,11 +473,12 @@ class WatchdogWorker(threading.Thread):
 
     def run(self):
         logger.info('WatchdogWorker started')
-        stuck_timeout = 30  # Consider a download stuck after 30 seconds without updates
+        stuck_timeout = 10  # Consider a download stuck after 10 seconds without updates
+        check_interval = 5  # Poll frequently enough to enforce the 10s timeout
         
         while self.is_running:
             try:
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(check_interval)
                 
                 # Check and clear stuck flags
                 from .runtimedata import check_and_clear_stuck_flags
@@ -555,6 +579,7 @@ class AutoClearWorker(threading.Thread):
                     # Check if all items are in a "done" state
                     all_done = True
                     all_successful = True
+                    any_downloaded = False
                     for local_id, item in download_queue.items():
                         status = item.get("item_status", "")
                         if status not in ("Downloaded", "Already Exists", "Cancelled", "Unavailable", "Deleted", "Failed"):
@@ -564,6 +589,8 @@ class AutoClearWorker(threading.Thread):
                         # Check if this item failed (for Plex scan decision)
                         if status in ("Failed", "Cancelled", "Unavailable"):
                             all_successful = False
+                        if status == "Downloaded":
+                            any_downloaded = True
 
                     if all_done:
                         # All items are done
@@ -572,8 +599,22 @@ class AutoClearWorker(threading.Thread):
                             self.last_all_done_time = time.time()
                             logger.info(f"All downloads complete. Will auto-clear in {self.CLEAR_DELAY_SECONDS} seconds...")
                             
-                            # Trigger Plex library scan if enabled (only if all successful)
-                            if config.get('plex_auto_scan', False) and all_successful:
+                            # Trigger Plex library scan only when nothing is still being queued/parsed
+                            # and at least one item was downloaded in this completed set.
+                            pending_count = 0
+                            parsing_count = 0
+                            with pending_lock:
+                                pending_count = len(pending)
+                            with parsing_lock:
+                                parsing_count = len(parsing)
+
+                            if (
+                                config.get('plex_auto_scan', False)
+                                and all_successful
+                                and any_downloaded
+                                and pending_count == 0
+                                and parsing_count == 0
+                            ):
                                 try:
                                     from .api.plex import plex_api
                                     logger.info("Triggering Plex library scan after download completion...")
@@ -603,6 +644,12 @@ class AutoClearWorker(threading.Thread):
                                             'message': f"Failed to trigger Plex library scan: {str(e)}",
                                             'type': 'error'
                                         })
+                            else:
+                                logger.info(
+                                    "Skipping Plex scan for completed set: "
+                                    f"all_successful={all_successful}, any_downloaded={any_downloaded}, "
+                                    f"pending={pending_count}, parsing={parsing_count}"
+                                )
                         else:
                             # Check if enough time has passed
                             elapsed = time.time() - self.last_all_done_time
