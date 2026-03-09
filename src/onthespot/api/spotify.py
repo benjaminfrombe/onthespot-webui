@@ -290,6 +290,8 @@ def _spotify_make_call_with_headers(
     skip_cache=False,
     text=False,
     use_ssl=False,
+    max_retry_after=None,
+    wait_for_rate_limit=False,
 ):
     refresh_headers = None
     if auth_source == "app":
@@ -302,6 +304,36 @@ def _spotify_make_call_with_headers(
             if new_source != "app":
                 return None
             return new_headers
+    elif auth_source == "session":
+        def refresh_headers():
+            try:
+                from ..accounts import get_account_token
+                rotated_token = get_account_token("spotify", rotate=True)
+                if rotated_token is None:
+                    logger.warning(
+                        "Spotify %s session refresh failed: no rotated account token available.",
+                        context,
+                    )
+                    return None
+                rotated_access_token = rotated_token.tokens().get("user-read-email")
+                if not rotated_access_token:
+                    logger.warning(
+                        "Spotify %s session refresh failed: rotated token missing user-read-email scope token.",
+                        context,
+                    )
+                    return None
+                logger.warning(
+                    "Spotify %s session token rotated after rate-limit response.",
+                    context,
+                )
+                return {"Authorization": f"Bearer {rotated_access_token}"}
+            except Exception as e:
+                logger.warning(
+                    "Spotify %s session refresh failed during rate-limit handling: %s",
+                    context,
+                    e,
+                )
+                return None
 
     return make_call(
         url,
@@ -311,6 +343,8 @@ def _spotify_make_call_with_headers(
         text=text,
         use_ssl=use_ssl,
         refresh_headers=refresh_headers,
+        max_retry_after=max_retry_after,
+        wait_for_rate_limit=wait_for_rate_limit,
     )
 
 
@@ -1279,26 +1313,54 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
     return tracks
 
 
-def spotify_get_search_results(token, search_term, content_types, _retry=False):
+def spotify_get_search_results(
+    token,
+    search_term,
+    content_types,
+    _retry=False,
+    _force_session=False,
+    _app_rotated=False,
+):
     logger.info(f"Get search result for term '{search_term}'")
 
     headers = {}
     auth_source = "session"
-    try:
-        headers, auth_source = _spotify_get_public_api_headers(token, "search")
-    except (RuntimeError, OSError, ConnectionError, Exception) as e:
-        if _retry:
-            logger.error(f"Failed to get token after retry: {e}")
-            raise
-        logger.warning(f"Token retrieval failed, attempting session reconnect: {e}")
+    if _force_session:
+        logger.info("Spotify search forcing session token fallback.")
         try:
-            parsing_index = config.get('active_account_number')
-            spotify_re_init_session(account_pool[parsing_index])
-            new_token = account_pool[parsing_index]['login']['session']
-            return spotify_get_search_results(new_token, search_term, content_types, _retry=True)
-        except Exception as reconnect_error:
-            logger.error(f"Failed to reconnect and search: {reconnect_error}")
-            raise
+            headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+            auth_source = "session"
+        except (RuntimeError, OSError, ConnectionError, Exception) as e:
+            if _retry:
+                logger.error(f"Failed to get session token after retry: {e}")
+                raise
+            logger.warning(f"Session token retrieval failed, attempting session reconnect: {e}")
+            try:
+                parsing_index = config.get('active_account_number')
+                spotify_re_init_session(account_pool[parsing_index])
+                new_token = account_pool[parsing_index]['login']['session']
+                return spotify_get_search_results(
+                    new_token, search_term, content_types, _retry=True, _force_session=True
+                )
+            except Exception as reconnect_error:
+                logger.error(f"Failed to reconnect and search with session token: {reconnect_error}")
+                raise
+    else:
+        try:
+            headers, auth_source = _spotify_get_public_api_headers(token, "search")
+        except (RuntimeError, OSError, ConnectionError, Exception) as e:
+            if _retry:
+                logger.error(f"Failed to get token after retry: {e}")
+                raise
+            logger.warning(f"Token retrieval failed, attempting session reconnect: {e}")
+            try:
+                parsing_index = config.get('active_account_number')
+                spotify_re_init_session(account_pool[parsing_index])
+                new_token = account_pool[parsing_index]['login']['session']
+                return spotify_get_search_results(new_token, search_term, content_types, _retry=True)
+            except Exception as reconnect_error:
+                logger.error(f"Failed to reconnect and search: {reconnect_error}")
+                raise
 
     params = {}
     params['limit'] = config.get("max_search_results")
@@ -1321,8 +1383,40 @@ def spotify_get_search_results(token, search_term, content_types, _retry=False):
         auth_source,
         params=params,
         skip_cache=True,
+        max_retry_after=90 if auth_source == "session" else None,
+        wait_for_rate_limit=(auth_source == "session"),
     )
     if data is None:
+        if auth_source == "app" and not _force_session and not _app_rotated:
+            logger.warning("Spotify search failed using app token; rotating app credentials and retrying.")
+            try:
+                rotated_headers, rotated_source = _spotify_get_public_api_headers(
+                    token, "search", force_rotate=True
+                )
+                if rotated_source == "app":
+                    data = _spotify_make_call_with_headers(
+                        f"{BASE_URL}/search",
+                        token,
+                        "search",
+                        rotated_headers,
+                        rotated_source,
+                        params=params,
+                        skip_cache=True,
+                    )
+                    if data is not None:
+                        auth_source = "app"
+            except Exception as e:
+                logger.warning(f"Failed to rotate app credentials for search retry: {e}")
+        if auth_source == "app" and not _force_session:
+            logger.warning("Spotify search failed using app token; retrying with session token.")
+            return spotify_get_search_results(
+                token,
+                search_term,
+                content_types,
+                _retry=_retry,
+                _force_session=True,
+                _app_rotated=True,
+            )
         logger.error("Spotify search failed (auth_source=%s).", auth_source)
         return []
     if isinstance(data, dict) and data.get("error"):

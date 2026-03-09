@@ -917,6 +917,11 @@
         let filtersVisible = false;
         let isSearching = false;
         let imagePreviewVisible = false;
+        let currentSearchSignature = null;
+        let lastSearchSignature = null;
+        let lastSearchTimestamp = 0;
+        let filterSearchDebounceTimer = null;
+        const SEARCH_REQUEST_DEDUPE_WINDOW_MS = 1200;
 
         // Detect if touch device
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -1207,15 +1212,12 @@
 
         // ============= SEARCH FUNCTIONS =============
         function submitSearch(event) {
-            event.preventDefault();
-
-            if (isSearching) return;
+            if (event && typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
 
             const query = document.getElementById('search-bar').value.trim();
             if (!query) return;
-
-            isSearching = true;
-            showLoading();
 
             // Build URL with filter parameters
             const filters = returnSearchFilters();
@@ -1229,15 +1231,38 @@
                 podcasts: filters.enable_search_podcasts,
                 audiobooks: filters.enable_search_audiobooks
             });
+            const searchSignature = params.toString();
+            const now = Date.now();
+
+            if (isSearching) {
+                if (currentSearchSignature === searchSignature) {
+                    return;
+                }
+                return;
+            }
+
+            if (
+                lastSearchSignature === searchSignature &&
+                now - lastSearchTimestamp < SEARCH_REQUEST_DEDUPE_WINDOW_MS
+            ) {
+                return;
+            }
+
+            isSearching = true;
+            currentSearchSignature = searchSignature;
+            lastSearchSignature = searchSignature;
+            lastSearchTimestamp = now;
+            showLoading();
 
             // Save search state to localStorage
             localStorage.setItem('lastSearchQuery', query);
             localStorage.setItem('lastSearchFilters', JSON.stringify(filters));
 
-            fetch(`/api/search_results?${params}`)
+            fetch(`/api/search_results?${searchSignature}`)
                 .then(response => response.json())
                 .then(data => {
                     isSearching = false;
+                    currentSearchSignature = null;
 
                     // Handle new response format with success field
                     if (data.success === false) {
@@ -1262,6 +1287,7 @@
                 })
                 .catch(error => {
                     isSearching = false;
+                    currentSearchSignature = null;
                     console.error('Search error:', error);
                     showEmpty();
                     showToast('Search failed. Please try again.', 'error');
@@ -1468,13 +1494,6 @@
                 document.getElementById('search-bar').focus();
             }
 
-            // Handle Enter key in search
-            document.getElementById('search-bar').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    submitSearch(e);
-                }
-            });
-
             // Add event listeners to filter checkboxes to auto-trigger search
             const filterCheckboxes = [
                 'enable_search_tracks',
@@ -1489,10 +1508,11 @@
             filterCheckboxes.forEach(id => {
                 document.getElementById(id).addEventListener('change', () => {
                     const query = document.getElementById('search-bar').value.trim();
-                    // Only auto-search if there's a query and we're not already searching
-                    if (query && !isSearching) {
+                    if (!query) return;
+                    clearTimeout(filterSearchDebounceTimer);
+                    filterSearchDebounceTimer = setTimeout(() => {
                         submitSearch(new Event('submit'));
-                    }
+                    }, 250);
                 });
             });
 

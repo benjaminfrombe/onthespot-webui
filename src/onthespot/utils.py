@@ -52,13 +52,39 @@ class SSLAdapter(requests.adapters.HTTPAdapter):
         return super().init_poolmanager(*args, ssl_context=context, **kwargs)
 
 
-def make_call(url, params=None, headers=None, session=None, skip_cache=False, text=False, use_ssl=False, refresh_headers=None):
+def make_call(
+    url,
+    params=None,
+    headers=None,
+    session=None,
+    skip_cache=False,
+    text=False,
+    use_ssl=False,
+    refresh_headers=None,
+    max_retry_after=None,
+    wait_for_rate_limit=False,
+):
+    if max_retry_after is None:
+        max_retry_after = config.get('api_retry_max_retry_after', 10)
+
     backoff_remaining = _get_endpoint_backoff(url)
     if backoff_remaining > 0:
-        logger.warning(
-            f"Endpoint backoff active for {url}; skipping call for {backoff_remaining}s."
-        )
-        return None
+        if wait_for_rate_limit:
+            if backoff_remaining > max_retry_after:
+                logger.warning(
+                    f"Endpoint backoff for {url} is {backoff_remaining}s, exceeds max "
+                    f"{max_retry_after}s; aborting call."
+                )
+                return None
+            logger.warning(
+                f"Endpoint backoff active for {url}; waiting {backoff_remaining}s before retry."
+            )
+            time.sleep(backoff_remaining)
+        else:
+            logger.warning(
+                f"Endpoint backoff active for {url}; skipping call for {backoff_remaining}s."
+            )
+            return None
     if not skip_cache:
         request_key = md5(f'{url}'.encode()).hexdigest()
         req_cache_file = os.path.join(config.get('_cache_dir'), 'reqcache', request_key + '.json')
@@ -87,8 +113,6 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
     max_attempts = config.get('api_retry_max_attempts', 3)
     default_delay = config.get('api_retry_default_delay', 1)
     request_timeout = 30  # 30 second timeout for API calls
-
-    max_retry_after = config.get('api_retry_max_retry_after', 10)
 
     for attempt in range(max_attempts):
         try:
@@ -135,6 +159,13 @@ def make_call(url, params=None, headers=None, session=None, skip_cache=False, te
                 )
                 _set_endpoint_backoff(url, max_retry_after)
                 return None
+            if wait_for_rate_limit and attempt < max_attempts - 1:
+                logger.warning(
+                    f"Rate limited (429) for {url}. Waiting {wait_seconds}s before retry "
+                    f"(attempt {attempt + 1}/{max_attempts})."
+                )
+                time.sleep(wait_seconds)
+                continue
             _set_endpoint_backoff(url, wait_seconds)
             logger.warning(
                 f"Rate limited (429) for {url}. Backing off for {wait_seconds}s "
