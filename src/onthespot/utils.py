@@ -148,9 +148,13 @@ def make_call(
                 new_headers = refresh_headers()
                 if new_headers:
                     headers = new_headers
+                    rotate_wait = min(max(wait_seconds, 1), max_retry_after)
                     logger.warning(
-                        f"Rate limited (429) for {url}; rotated credentials and retrying immediately."
+                        f"Rate limited (429) for {url}; rotated credentials. "
+                        f"Waiting {rotate_wait}s before retry."
                     )
+                    _set_endpoint_backoff(url, rotate_wait)
+                    time.sleep(rotate_wait)
                     continue
             if wait_seconds > max_retry_after:
                 logger.warning(

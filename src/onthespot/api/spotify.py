@@ -1360,7 +1360,7 @@ def spotify_get_album_tracks_with_metadata(
             "album metadata",
             headers,
             auth_source,
-            skip_cache=True,
+            skip_cache=False,
         )
         if resp is None:
             if auth_source == "app" and not _force_session and not _app_rotated:
