@@ -993,7 +993,13 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath, _retry=Fal
         return False
 
 
-def spotify_get_playlist_items(token, playlist_id, _retry=False):
+def spotify_get_playlist_items(
+    token,
+    playlist_id,
+    _retry=False,
+    _force_session=False,
+    _app_rotated=False,
+):
     """
     Get playlist items with MINIMAL data (just IDs and types).
     For playlists, we fetch metadata per-track during download to avoid API hammering.
@@ -1013,12 +1019,15 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
     while True:
         url = f'{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}&fields=items(track(id,type,name,artists(name),external_urls(spotify),is_playable)),total'
         
-        # Use app token if available (much higher rate limits than session token)
         try:
-            headers, auth_source = _spotify_get_public_api_headers(token, "playlist items")
+            if _force_session:
+                headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+                auth_source = "session"
+            else:
+                headers, auth_source = _spotify_get_public_api_headers(token, "playlist items")
             if debug_enabled:
                 logger.info(f"[DEBUG FLOW] Using {auth_source} token for playlist request")
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError, ConnectionError, Exception) as e:
             if _retry:
                 logger.error(f"Failed to get token after retry for playlist items {playlist_id}: {e}")
                 raise
@@ -1026,7 +1035,13 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
             parsing_index = config.get('active_account_number')
             spotify_re_init_session(account_pool[parsing_index])
             new_token = account_pool[parsing_index]['login']['session']
-            return spotify_get_playlist_items(new_token, playlist_id, _retry=True)
+            return spotify_get_playlist_items(
+                new_token,
+                playlist_id,
+                _retry=True,
+                _force_session=_force_session,
+                _app_rotated=_app_rotated,
+            )
 
         if debug_enabled:
             logger.info(f"[DEBUG FLOW] Calling make_call() for offset={offset}, limit={limit} (minimal fields)")
@@ -1043,6 +1058,30 @@ def spotify_get_playlist_items(token, playlist_id, _retry=False):
         )
         
         if resp is None:
+            if auth_source == "app" and not _force_session and not _app_rotated:
+                logger.warning(
+                    "Spotify playlist items failed using app token; rotating app credentials and retrying."
+                )
+                try:
+                    _spotify_get_public_api_headers(token, "playlist items", force_rotate=True)
+                except Exception as e:
+                    logger.warning(f"Failed to rotate app credentials for playlist items retry: {e}")
+                return spotify_get_playlist_items(
+                    token,
+                    playlist_id,
+                    _retry=_retry,
+                    _force_session=False,
+                    _app_rotated=True,
+                )
+            if auth_source == "app" and not _force_session:
+                logger.warning("Spotify playlist items failed using app token; retrying with session token.")
+                return spotify_get_playlist_items(
+                    token,
+                    playlist_id,
+                    _retry=_retry,
+                    _force_session=True,
+                    _app_rotated=_app_rotated,
+                )
             logger.error(f"Failed to get playlist items for {playlist_id} at offset {offset}")
             raise RuntimeError(f"Playlist API call failed for {playlist_id}")
 
@@ -1238,7 +1277,13 @@ def spotify_get_album_track_ids(token, album_id, _retry=False):
     return item_ids
 
 
-def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
+def spotify_get_album_tracks_with_metadata(
+    token,
+    album_id,
+    _retry=False,
+    _force_session=False,
+    _app_rotated=False,
+):
     """
     Get album tracks with full track objects for optimization.
     Returns list of track objects that can be cached to avoid individual API calls.
@@ -1251,8 +1296,12 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
     # First get album data for shared metadata
     headers = {}
     try:
-        headers, auth_source = _spotify_get_public_api_headers(token, "album metadata")
-    except (RuntimeError, OSError) as e:
+        if _force_session:
+            headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+            auth_source = "session"
+        else:
+            headers, auth_source = _spotify_get_public_api_headers(token, "album metadata")
+    except (RuntimeError, OSError, ConnectionError, Exception) as e:
         if _retry:
             logger.error(f"Failed to get token after retry for album {album_id}: {e}")
             raise
@@ -1260,7 +1309,13 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
         parsing_index = config.get('active_account_number')
         spotify_re_init_session(account_pool[parsing_index])
         new_token = account_pool[parsing_index]['login']['session']
-        return spotify_get_album_tracks_with_metadata(new_token, album_id, _retry=True)
+        return spotify_get_album_tracks_with_metadata(
+            new_token,
+            album_id,
+            _retry=True,
+            _force_session=_force_session,
+            _app_rotated=_app_rotated,
+        )
     
     # Get full album data (includes album-level metadata)
     album_data = _spotify_make_call_with_headers(
@@ -1271,6 +1326,28 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
         auth_source,
     )
     if not album_data:
+        if auth_source == "app" and not _force_session and not _app_rotated:
+            logger.warning("Spotify album metadata failed using app token; rotating app credentials and retrying.")
+            try:
+                _spotify_get_public_api_headers(token, "album metadata", force_rotate=True)
+            except Exception as e:
+                logger.warning(f"Failed to rotate app credentials for album metadata retry: {e}")
+            return spotify_get_album_tracks_with_metadata(
+                token,
+                album_id,
+                _retry=_retry,
+                _force_session=False,
+                _app_rotated=True,
+            )
+        if auth_source == "app" and not _force_session:
+            logger.warning("Spotify album metadata failed using app token; retrying with session token.")
+            return spotify_get_album_tracks_with_metadata(
+                token,
+                album_id,
+                _retry=_retry,
+                _force_session=True,
+                _app_rotated=_app_rotated,
+            )
         logger.error("Failed to get album data for %s", album_id)
         return []
 
@@ -1286,6 +1363,28 @@ def spotify_get_album_tracks_with_metadata(token, album_id, _retry=False):
             skip_cache=True,
         )
         if resp is None:
+            if auth_source == "app" and not _force_session and not _app_rotated:
+                logger.warning("Spotify album tracks failed using app token; rotating app credentials and retrying.")
+                try:
+                    _spotify_get_public_api_headers(token, "album metadata", force_rotate=True)
+                except Exception as e:
+                    logger.warning(f"Failed to rotate app credentials for album tracks retry: {e}")
+                return spotify_get_album_tracks_with_metadata(
+                    token,
+                    album_id,
+                    _retry=_retry,
+                    _force_session=False,
+                    _app_rotated=True,
+                )
+            if auth_source == "app" and not _force_session:
+                logger.warning("Spotify album tracks failed using app token; retrying with session token.")
+                return spotify_get_album_tracks_with_metadata(
+                    token,
+                    album_id,
+                    _retry=_retry,
+                    _force_session=True,
+                    _app_rotated=_app_rotated,
+                )
             logger.error("Spotify album tracks request failed for %s", album_id)
             break
 
