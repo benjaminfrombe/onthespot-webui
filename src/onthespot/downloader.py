@@ -662,7 +662,9 @@ class DownloadWorker:
             try:
                 # Periodic heartbeat logging
                 if time.time() - last_heartbeat > heartbeat_interval:
-                    logger.info(f"DownloadWorker heartbeat: queue_size={len(download_queue)}")
+                    with download_queue_lock:
+                        qsize = len(download_queue)
+                    logger.info(f"DownloadWorker heartbeat: queue_size={qsize}")
                     last_heartbeat = time.time()
 
                 try:
@@ -673,7 +675,6 @@ class DownloadWorker:
                             available_items = [
                                 (local_id, item) for local_id, item in download_queue.items()
                                 if item['available'] and item['item_status'] in ('Waiting', 'Reconnecting')
-                                and item.get('metadata_retry_at', 0) <= time.time()
                             ]
                             
                             if not available_items:
@@ -944,15 +945,8 @@ class DownloadWorker:
                                 self.update_progress(item, "Reconnecting", 0)
                                 time.sleep(metadata_retry_delay)
                                 continue
-                            logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
-                            cooldown = config.get("metadata_retry_cooldown", 30)
-                            retry_at = time.time() + cooldown
-                            item['metadata_retry_at'] = retry_at
-                            item['item_status'] = "Reconnecting"
-                            with download_queue_lock:
-                                if local_id in download_queue:
-                                    download_queue[local_id]['metadata_retry_at'] = retry_at
-                            self.update_progress(item, "Reconnecting", 0)
+                            logger.error(f"Failed to fetch metadata for '{item_id}' after {max_metadata_retries} attempts — marking Failed for RetryWorker: {str(e)}")
+                            self.update_progress(item, "Failed", 0)
                             self.readd_item_to_download_queue(item)
                             metadata_failed = True
                             break

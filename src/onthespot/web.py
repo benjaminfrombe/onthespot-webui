@@ -426,9 +426,35 @@ class QueueWorker(threading.Thread):
                                         processed_successfully += 1
                                         _debug_log(f"Added {local_id} to download_queue, total queue size: {len(download_queue)}")
                                 else:
-                                    logger.warning(f"QueueWorker: no metadata returned for {local_id}, re-queuing for retry")
-                                    with pending_lock:
-                                        pending[local_id] = item
+                                    item['_qw_retries'] = item.get('_qw_retries', 0) + 1
+                                    if item['_qw_retries'] <= 5:
+                                        logger.warning(f"QueueWorker: no metadata for {local_id} (attempt {item['_qw_retries']}/5), re-queuing")
+                                        time.sleep(2)
+                                        with pending_lock:
+                                            pending[local_id] = item
+                                    else:
+                                        logger.error(f"QueueWorker: metadata failed 5 times for {local_id}, adding as Failed")
+                                        with download_queue_lock:
+                                            download_queue[local_id] = {
+                                                'local_id': local_id,
+                                                'available': True,
+                                                'item_service': item.get('item_service', ''),
+                                                'item_type': item.get('item_type', 'track'),
+                                                'item_id': item.get('item_id', ''),
+                                                'item_status': 'Failed',
+                                                'file_path': None,
+                                                'item_name': item.get('item_name', item.get('item_id', 'Unknown')),
+                                                'item_by': item.get('item_by', ''),
+                                                'parent_category': item.get('parent_category'),
+                                                'playlist_name': item.get('playlist_name'),
+                                                'playlist_by': item.get('playlist_by'),
+                                                'playlist_number': item.get('playlist_number'),
+                                                'playlist_total': item.get('playlist_total'),
+                                                'item_url': item.get('item_url', ''),
+                                                'item_thumbnail': '',
+                                                'progress': 0,
+                                                'last_update_time': time.time(),
+                                            }
                             except Exception as e:
                                 logger.error(f"Error processing {local_id}: {str(e)}\nTraceback: {traceback.format_exc()}")
                                 _debug_log(f"Exception processing {local_id}: {e}")
@@ -1499,7 +1525,7 @@ def main():
             register_worker(retryworker)
 
         session_worker = SessionHealthWorker(
-            interval_seconds=config.get('spotify_session_check_interval', 3600)
+            interval_seconds=config.get('spotify_session_check_interval', 1800)
         )
         session_worker.start()
         register_worker(session_worker)
