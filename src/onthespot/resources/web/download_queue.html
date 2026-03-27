@@ -1189,6 +1189,7 @@
             const statusClasses = {
                 'Downloading': 'status-downloading',
                 'Connecting': 'status-downloading',
+                'Reconnecting': 'status-downloading',
                 'Waiting': 'status-waiting',
                 'Downloaded': 'status-downloaded',
                 'Already Exists': 'status-exists',
@@ -1201,7 +1202,7 @@
             const displayText = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
 
             // Add progress for downloading status using background-size
-            if (effectiveStatus === 'Downloading' || effectiveStatus === 'Connecting') {
+            if (effectiveStatus === 'Downloading' || effectiveStatus === 'Connecting' || effectiveStatus === 'Reconnecting') {
                 const progressValue = Math.max(0, Math.min(100, Number(progress) || 0));
                 return `<span class="status-badge ${className}" style="--progress: ${(progressValue / 100).toFixed(4)};"><span class="status-label">${displayText || 'N/A'}</span></span>`;
             }
