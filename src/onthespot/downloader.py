@@ -549,7 +549,7 @@ class DownloadWorker:
                             alternative_track_unavailable = True
                         if attempt < max_retries_per_account - 1:
                             logger.warning(f"Download stream failed ({error_type}, attempt {attempt + 1}) on account {current_account_idx}, reconnecting session: {e}")
-                            self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                            self.update_progress(item, "Connecting", item.get('progress', 0))
                             try:
                                 # Force reconnection to fix stream issues immediately
                                 spotify_re_init_session(account_pool[current_account_idx], force=True)
@@ -609,7 +609,7 @@ class DownloadWorker:
 
                         if is_retryable and attempt < max_retries_per_account - 1:
                             logger.warning(f"Fallback account {account_idx} stream failed ({error_type}, attempt {attempt + 1}), reconnecting: {e}")
-                            self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                            self.update_progress(item, "Connecting", item.get('progress', 0))
                             try:
                                 spotify_re_init_session(account_pool[account_idx], force=True)
                                 fallback_token = account_pool[account_idx]['login']['session']
@@ -671,7 +671,7 @@ class DownloadWorker:
                             # Priority: album_name, track_number, then insertion order
                             available_items = [
                                 (local_id, item) for local_id, item in download_queue.items()
-                                if item['available'] and item['item_status'] in ('Waiting', 'Reconnecting')
+                                if item['available'] and item['item_status'] in ('Waiting', 'Connecting')
                             ]
                             
                             if not available_items:
@@ -939,7 +939,7 @@ class DownloadWorker:
                                 logger.warning(
                                     f"Metadata fetch failed for '{item_id}' (attempt {metadata_attempt}/{max_metadata_retries}): {e}. Retrying..."
                                 )
-                                self.update_progress(item, "Reconnecting", 0)
+                                self.update_progress(item, "Connecting", 0)
                                 time.sleep(metadata_retry_delay)
                                 continue
                             logger.error(f"Failed to fetch metadata for '{item_id}' after {max_metadata_retries} attempts — marking Failed for RetryWorker: {str(e)}")
@@ -1238,7 +1238,7 @@ class DownloadWorker:
                                     if download_retry_count < max_download_retries:
                                         logger.warning(f"Download interrupted (attempt {download_retry_count}/{max_download_retries}): {error_str}")
                                         logger.info(f"Forcing session recreation and retrying download...")
-                                        self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                                        self.update_progress(item, "Connecting", item.get('progress', 0))
 
                                         # FORCE session recreation on stream death/corruption
                                         current_account_idx = self._find_account_index('spotify', token)

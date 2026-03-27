@@ -1055,7 +1055,7 @@
                 if (statusCell) {
                     const statusBadge = statusCell.querySelector('.status-badge');
                     const currentStatus = statusBadge?.textContent?.trim();
-                    const effectiveStatus = isReconnectingState(newItem.item_status) ? 'Reconnecting' : newItem.item_status;
+                    const effectiveStatus = isReconnectingState(newItem.item_status) ? 'Connecting' : newItem.item_status;
                     const newStatus = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
                     const newProgress = newItem.progress || 0;
 
@@ -1188,7 +1188,7 @@
         function createStatusBadge(status, progress = 0) {
             const statusClasses = {
                 'Downloading': 'status-downloading',
-                'Reconnecting': 'status-downloading',
+                'Connecting': 'status-downloading',
                 'Waiting': 'status-waiting',
                 'Downloaded': 'status-downloaded',
                 'Already Exists': 'status-exists',
@@ -1196,12 +1196,12 @@
                 'Cancelled': 'status-cancelled',
                 'Unavailable': 'status-failed'
             };
-            const effectiveStatus = isReconnectingState(status) ? 'Reconnecting' : status;
+            const effectiveStatus = isReconnectingState(status) ? 'Connecting' : status;
             const className = statusClasses[effectiveStatus] || '';
             const displayText = effectiveStatus === 'Already Exists' ? 'Exists' : effectiveStatus;
-            
+
             // Add progress for downloading status using background-size
-            if (effectiveStatus === 'Downloading' || effectiveStatus === 'Reconnecting') {
+            if (effectiveStatus === 'Downloading' || effectiveStatus === 'Connecting') {
                 const progressValue = Math.max(0, Math.min(100, Number(progress) || 0));
                 return `<span class="status-badge ${className}" style="--progress: ${(progressValue / 100).toFixed(4)};"><span class="status-label">${displayText || 'N/A'}</span></span>`;
             }
