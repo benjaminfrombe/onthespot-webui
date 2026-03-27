@@ -602,27 +602,24 @@ class DownloadWorker:
                                        any(x in error_str for x in ['Bad file descriptor', 'Cannot get alternative track',
                                                                      'Unable to', 'Failed fetching audio key']))
 
-                    if is_retryable:
                         if 'audio key error' in error_str and 'code: 2' in error_str:
                             alternative_track_unavailable = True
                             audio_key_unavailable = True
                             raise RuntimeError("Cannot get alternative track")
-                            if 'Cannot get alternative track' in error_str:
-                                alternative_track_unavailable = True
-                            if attempt < max_retries_per_account - 1:
-                                logger.warning(f"Fallback account {account_idx} stream failed ({error_type}, attempt {attempt + 1}), reconnecting: {e}")
-                                self.update_progress(item, "Reconnecting", item.get('progress', 0))
-                                try:
-                                    # Force reconnection to fix fallback account stream issues
-                                    spotify_re_init_session(account_pool[account_idx], force=True)
-                                    fallback_token = account_pool[account_idx]['login']['session']
-                                    logger.info(f"Fallback account {account_idx} reconnected, retrying...")
-                                except Exception as reinit_err:
-                                    logger.error(f"Fallback account {account_idx} reinit failed: {reinit_err}")
-                                    break
-                            else:
-                                logger.warning(f"Max retries reached for fallback account {account_idx}")
+
+                        if is_retryable and attempt < max_retries_per_account - 1:
+                            logger.warning(f"Fallback account {account_idx} stream failed ({error_type}, attempt {attempt + 1}), reconnecting: {e}")
+                            self.update_progress(item, "Reconnecting", item.get('progress', 0))
+                            try:
+                                spotify_re_init_session(account_pool[account_idx], force=True)
+                                fallback_token = account_pool[account_idx]['login']['session']
+                                logger.info(f"Fallback account {account_idx} reconnected, retrying...")
+                            except Exception as reinit_err:
+                                logger.error(f"Fallback account {account_idx} reinit failed: {reinit_err}")
                                 break
+                        elif is_retryable:
+                            logger.warning(f"Max retries reached for fallback account {account_idx}")
+                            break
                         else:
                             raise
             except Exception as e:
