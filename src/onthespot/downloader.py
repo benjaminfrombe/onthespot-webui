@@ -24,7 +24,7 @@ from .api.youtube_music import youtube_music_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_get_decryption_key, crunchyroll_get_mpd_info, crunchyroll_close_stream
 from .api.generic import generic_get_track_metadata
 from .otsconfig import config
-from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, increment_failure_count, reset_failure_count, album_download_locks, album_download_locks_lock, trigger_worker_restart
+from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, album_download_locks, album_download_locks_lock
 from . import runtimedata
 from .utils import format_item_path, convert_audio_format, embed_metadata, set_music_thumbnail, fix_mp3_metadata, add_to_m3u_file, strip_metadata, convert_video_format
 
@@ -36,13 +36,9 @@ _EXISTING_FILE_CACHE = None
 _EXISTING_FILE_CACHE_LOCK = threading.Lock()
 _EXISTING_FILE_CACHE_VERSION = 1
 _METADATA_TIMEOUT_SENTINEL = object()
-_METADATA_TIMEOUT_RESTART_THRESHOLD = 2
-_metadata_timeout_streak = 0
-_metadata_timeout_lock = threading.Lock()
 
 
 def _call_with_timeout(func, timeout_seconds, description):
-    global _metadata_timeout_streak
     if not timeout_seconds or timeout_seconds <= 0:
         return func()
     result_holder = {}
@@ -61,31 +57,10 @@ def _call_with_timeout(func, timeout_seconds, description):
 
     if worker.is_alive():
         logger.error(f"{description} timed out after {timeout_seconds}s")
-        if "Metadata fetch" in description:
-            with _metadata_timeout_lock:
-                _metadata_timeout_streak += 1
-                current_streak = _metadata_timeout_streak
-            logger.error(
-                "Metadata timeout streak: %s/%s",
-                current_streak,
-                _METADATA_TIMEOUT_RESTART_THRESHOLD,
-            )
-            if current_streak >= _METADATA_TIMEOUT_RESTART_THRESHOLD:
-                logger.error(
-                    "Metadata timed out %s consecutive times; triggering hard backend restart.",
-                    current_streak,
-                )
-                with _metadata_timeout_lock:
-                    _metadata_timeout_streak = 0
-                trigger_worker_restart()
         return _METADATA_TIMEOUT_SENTINEL
 
     if 'error' in error_holder:
         raise error_holder['error']
-
-    if "Metadata fetch" in description:
-        with _metadata_timeout_lock:
-            _metadata_timeout_streak = 0
 
     return result_holder.get('result')
 
@@ -331,55 +306,17 @@ class RetryWorker:
 
 
     def run(self):
-        from .runtimedata import get_consecutive_failures
         while self.is_running:
             if download_queue:
-                # First, check if there are any failed downloads
-                has_failed_downloads = False
-                failed_count = 0
                 with download_queue_lock:
                     for local_id in download_queue.keys():
                         if download_queue[local_id]['item_status'] == "Failed":
-                            has_failed_downloads = True
-                            failed_count += 1
-
-                # If failures are accumulating, back off to let hard restart happen
-                current_failure_count = get_consecutive_failures()
-                if current_failure_count >= 3:
-                    logger.warning(f"High consecutive failure count ({current_failure_count}), backing off to allow hard restart")
-                    time.sleep(10)
-                    continue
-
-                # If there are failed downloads, force reconnect all Spotify accounts
-                if has_failed_downloads:
-                    logger.info(f"Found {failed_count} failed downloads - forcing Spotify account reconnection before retry")
-                    from .api.spotify import spotify_re_init_session
-
-                    reconnected_count = 0
-                    for account_idx, account in enumerate(account_pool):
-                        if account.get('service') == 'spotify' and account.get('login', {}).get('session'):
-                            try:
-                                logger.info(f"Reconnecting Spotify account {account_idx}: {account.get('username', 'unknown')}")
-                                # Force reconnection to ensure failed downloads get fresh sessions
-                                spotify_re_init_session(account, force=True)
-                                reconnected_count += 1
-                            except Exception as e:
-                                logger.error(f"Failed to reconnect Spotify account {account_idx}: {e}")
-
-                    if reconnected_count > 0:
-                        logger.info(f"Successfully reconnected {reconnected_count} Spotify account(s) - now retrying failed downloads")
-                    elif failed_count > 0:
-                        logger.warning(f"Could not reconnect any accounts, but have {failed_count} failed downloads")
-
-                # Now retry the failed downloads
-                with download_queue_lock:
-                    for local_id in download_queue.keys():
-                        if download_queue[local_id]['item_status'] == "Failed":
-                            logger.debug(f'Retrying : {local_id}')
+                            logger.debug(f'Retrying: {local_id}')
                             download_queue[local_id]['item_status'] = "Waiting"
             if config.get('retry_worker_delay') > 0:
                 time.sleep(config.get('retry_worker_delay') * 60)
-            continue
+            else:
+                time.sleep(5)
 
 
     def stop(self):
@@ -420,7 +357,6 @@ class DownloadWorker:
                 logger.error(f"Failed to add item to M3U file: {str(m3u_error)}\nTraceback: {traceback.format_exc()}")
                 logger.warning("M3U write failed, but file download was successful and will not be deleted")
         logger.info(f"File already exists (found as {existing_name}), Skipping download for track by id '{item_id}'")
-        reset_failure_count(account_index)  # Reset failure counter since file exists
 
         # Track completed playlist item (if not already tracked above)
         if config.get('create_m3u_file') and item.get('parent_category') == 'playlist' and not item.get('_m3u_written'):
@@ -721,25 +657,15 @@ class DownloadWorker:
     def run(self):
         last_heartbeat = time.time()
         heartbeat_interval = 60  # Log every 60 seconds
-        
+
         while self.is_running:
             try:
                 # Periodic heartbeat logging
                 if time.time() - last_heartbeat > heartbeat_interval:
-                    with runtimedata.batch_queue_processing_lock:
-                        is_processing = runtimedata.batch_queue_processing
-                    logger.info(f"DownloadWorker heartbeat: batch_processing={is_processing}, queue_size={len(download_queue)}")
+                    logger.info(f"DownloadWorker heartbeat: queue_size={len(download_queue)}")
                     last_heartbeat = time.time()
-                
+
                 try:
-                    # Wait if QueueWorker is batch processing items into download queue
-                    with runtimedata.batch_queue_processing_lock:
-                        is_batch_processing = runtimedata.batch_queue_processing
-                    
-                    if is_batch_processing:
-                        time.sleep(0.2)
-                        continue
-                    
                     if download_queue:
                         with download_queue_lock:
                             # Sort queue by album to group album tracks together
@@ -1055,7 +981,6 @@ class DownloadWorker:
                     logger.error(f"Failed to fetch metadata for '{item_id}', Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                     item['item_status'] = "Failed"
                     self.update_progress(item, "Failed", 0)
-                    increment_failure_count(account_index)  # Track failure for worker restart
                     self.readd_item_to_download_queue(item)
                     continue
 
@@ -1873,22 +1798,9 @@ class DownloadWorker:
                         self.update_progress(item, "Unavailable", 0)
                         self.readd_item_to_download_queue(item)
                         continue
-                    # Session/auth errors are more serious - count them more heavily
-                    is_session_error = any(x in error_str for x in [
-                        'session', 'auth', 'failed to load audio stream', 
-                        'cannot use account', 'stale'
-                    ])
-                    
                     logger.info(f"Download failed: {item}, Error: {str(e)}\nTraceback: {traceback.format_exc()}")
                     item['item_status'] = 'Failed'
                     self.update_progress(item, "Failed", 0)
-                    
-                    # Track failures - session errors count double to trigger restart faster
-                    if is_session_error:
-                        logger.warning("Session-related error detected, incrementing failure count twice")
-                        increment_failure_count(account_index)  # Count twice for session errors
-                    increment_failure_count(account_index)
-                    
                     self.readd_item_to_download_queue(item)
                     continue
 
@@ -1997,7 +1909,6 @@ class DownloadWorker:
                 logger.info("Item Successfully Downloaded")
                 item['progress'] = 100
                 self.update_progress(item, "Downloaded", 100)
-                reset_failure_count(account_index)  # Reset failure counter on successful download
                 if item.get('file_path'):
                     _set_existing_file_cache_entry(existing_file_cache_key, item['file_path'])
                 
@@ -2037,22 +1948,10 @@ class DownloadWorker:
                     self.readd_item_to_download_queue(item)
                     time.sleep(config.get("download_delay"))
                     continue
-                # Session/auth errors are more serious - count them more heavily
-                is_session_error = any(x in error_str for x in [
-                    'session', 'auth', 'failed to load audio stream', 
-                    'cannot use account', 'stale'
-                ])
-                
                 logger.error(f"Unknown Exception: {str(e)}\nTraceback: {traceback.format_exc()}")
                 if item['item_status'] != "Cancelled":
                     item['item_status'] = "Failed"
                     self.update_progress(item, "Failed", 0)
-                    
-                    # Track failures - session errors count double to trigger restart faster
-                    if is_session_error:
-                        logger.warning("Session-related error detected, incrementing failure count twice")
-                        increment_failure_count(account_index)  # Count twice for session errors
-                    increment_failure_count(account_index)
                 else:
                     self.update_progress(item, "Cancelled", 0)
 

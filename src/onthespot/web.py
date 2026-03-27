@@ -34,7 +34,7 @@ except Exception as e:
 from .downloader import DownloadWorker, RetryWorker
 from .otsconfig import cache_dir, config_dir, config
 from .parse_item import parsingworker, parse_url
-from .runtimedata import get_logger, account_pool, pending, download_queue, download_queue_lock, pending_lock, parsing, parsing_lock, register_worker, set_worker_restart_callback, set_watchdog_restart_callback, system_notifications, system_notifications_lock, album_download_locks, album_download_locks_lock
+from .runtimedata import get_logger, account_pool, pending, download_queue, download_queue_lock, pending_lock, parsing, parsing_lock, register_worker, system_notifications, system_notifications_lock, album_download_locks, album_download_locks_lock
 from . import runtimedata
 from .search import get_search_results
 from .utils import format_bytes
@@ -65,27 +65,29 @@ def _load_config_data():
 
 
 def _cache_download_queue_to_disk():
-    """Persist the current download queue so the new process can resume it."""
-    import json
+    """Persist pending/active queue items so the new process can resume them."""
     cached_path = os.path.join(cache_dir(), 'cached_download_queue.json')
-    # Never block forever here: hard restart must remain possible even if the queue lock is stuck.
+    SKIP_STATUSES = {'Downloaded', 'Already Exists', 'Cancelled', 'Unavailable', 'Deleted'}
     lock_acquired = download_queue_lock.acquire(timeout=3)
     if not lock_acquired:
         raise TimeoutError("Timed out acquiring download_queue_lock while caching queue")
     try:
-        # Save essential metadata to preserve playlist context
         items_to_cache = []
         for item in download_queue.values():
+            if item.get('item_status') in SKIP_STATUSES:
+                continue
             items_to_cache.append({
                 'item_url': item.get('item_url'),
                 'item_service': item.get('item_service'),
                 'item_type': item.get('item_type'),
                 'item_id': item.get('item_id'),
+                'item_name': item.get('item_name', ''),
+                'item_by': item.get('item_by', ''),
                 'parent_category': item.get('parent_category'),
                 'playlist_name': item.get('playlist_name'),
                 'playlist_by': item.get('playlist_by'),
                 'playlist_number': item.get('playlist_number'),
-                'playlist_total': item.get('playlist_total')
+                'playlist_total': item.get('playlist_total'),
             })
         with open(cached_path, 'w') as file:
             json.dump(items_to_cache, file, indent=2)
@@ -294,10 +296,6 @@ class QueueWorker(threading.Thread):
                     continue
                 
                 if pending:
-                    # Set flag to prevent downloads during batch processing (keeps downloads paused until ALL pending items processed)
-                    runtimedata.set_batch_queue_processing_flag(True)
-                    _debug_log("Set batch_queue_processing = True")
-                    
                     try:
                         # Process pending items in batches to avoid long blocking for huge playlists
                         BATCH_SIZE = 50  # Process 50 items at a time
@@ -428,7 +426,9 @@ class QueueWorker(threading.Thread):
                                         processed_successfully += 1
                                         _debug_log(f"Added {local_id} to download_queue, total queue size: {len(download_queue)}")
                                 else:
-                                    _debug_log(f"WARNING: No metadata returned for {local_id}")
+                                    logger.warning(f"QueueWorker: no metadata returned for {local_id}, re-queuing for retry")
+                                    with pending_lock:
+                                        pending[local_id] = item
                             except Exception as e:
                                 logger.error(f"Error processing {local_id}: {str(e)}\nTraceback: {traceback.format_exc()}")
                                 _debug_log(f"Exception processing {local_id}: {e}")
@@ -438,15 +438,11 @@ class QueueWorker(threading.Thread):
                         logger.info(f"QueueWorker finished processing batch, {len(download_queue)} items now in download queue")
                         _debug_log(f"Batch complete: {processed_successfully} successfully added, download_queue size: {len(download_queue)}")
                         
-                        # Only clear flag when ALL pending items are processed
                         if remaining == 0:
-                            runtimedata.set_batch_queue_processing_flag(False)
                             logger.info("All pending items processed, downloads can now start")
-                    
+
                     except Exception as e:
-                        # CRITICAL: Always clear the flag on exception to prevent system lockup
-                        logger.error(f"Exception in QueueWorker batch processing, clearing flag: {str(e)}\nTraceback: {traceback.format_exc()}")
-                        runtimedata.set_batch_queue_processing_flag(False)
+                        logger.error(f"Exception in QueueWorker batch processing: {str(e)}\nTraceback: {traceback.format_exc()}")
                 else:
                     time.sleep(0.2)
             except Exception as e:
@@ -454,8 +450,6 @@ class QueueWorker(threading.Thread):
 
     def stop(self):
         logger.info('Stopping Queue Worker')
-        # Clear batch processing flag when stopping to prevent stuck state
-        runtimedata.set_batch_queue_processing_flag(False)
         self.is_running = False
         self.join(timeout=5)
 
@@ -473,44 +467,41 @@ class WatchdogWorker(threading.Thread):
 
     def run(self):
         logger.info('WatchdogWorker started')
-        stuck_timeout = 10  # Consider a download stuck after 10 seconds without updates
-        check_interval = 5  # Poll frequently enough to enforce the 10s timeout
-        
+        stuck_timeout = 60  # Mark download Failed after 60s without progress
+        check_interval = 15  # Check every 15 seconds
+
         while self.is_running:
             try:
                 time.sleep(check_interval)
-                
-                # Check and clear stuck flags
+
+                # Clear stuck batch_parse flag (no restart, just unblock)
                 from .runtimedata import check_and_clear_stuck_flags
-                if check_and_clear_stuck_flags():
-                    logger.warning("Watchdog cleared stuck flags - workers should resume")
-                
-                # Check for stuck downloads
-                stuck_detected = False
+                check_and_clear_stuck_flags()
+
+                # Check for stuck downloads — mark Failed instead of hard restart
                 lock_acquired = download_queue_lock.acquire(timeout=2)
                 if not lock_acquired:
-                    logger.error("⚠️ WATCHDOG ALERT: download_queue_lock could not be acquired (possible deadlock)")
-                    stuck_detected = True
-                else:
-                    try:
-                        current_time = time.time()
-                        for local_id, item in download_queue.items():
-                            # Check if item has been in "Downloading" state for too long without updates
-                            if item['item_status'] == 'Downloading':
-                                last_update = item.get('last_update_time', 0)
-                                if last_update > 0 and current_time - last_update > stuck_timeout:
-                                    logger.error(f"⚠️ WATCHDOG ALERT: Download stuck for {int(current_time - last_update)}s without progress: {item.get('item_name', 'Unknown')} (ID: {local_id})")
-                                    stuck_detected = True
-                                    break
-                    finally:
-                        download_queue_lock.release()
-                
-                if stuck_detected:
-                    logger.error("🚨 WATCHDOG: Triggering hard restart due to stuck download...")
-                    trigger_hard_restart("watchdog detected stuck download")
-                    
+                    logger.error("⚠️ WATCHDOG: download_queue_lock timeout (possible deadlock)")
+                    continue
+
+                try:
+                    current_time = time.time()
+                    stuck_items = []
+                    for local_id, item in download_queue.items():
+                        if item['item_status'] == 'Downloading':
+                            last_update = item.get('last_update_time', 0)
+                            if last_update > 0 and current_time - last_update > stuck_timeout:
+                                stuck_items.append((local_id, item.get('item_name', 'Unknown')))
+                    for local_id, name in stuck_items:
+                        elapsed = int(current_time - download_queue[local_id].get('last_update_time', current_time))
+                        logger.error(f"⚠️ WATCHDOG: '{name}' stuck for {elapsed}s — marking Failed for retry")
+                        download_queue[local_id]['item_status'] = 'Failed'
+                        download_queue[local_id]['available'] = True
+                finally:
+                    download_queue_lock.release()
+
             except Exception as e:
-                logger.error(f"Error in WatchdogWorker: {e}\nTraceback: {traceback.format_exc()}")
+                logger.error(f"WatchdogWorker error: {e}\nTraceback: {traceback.format_exc()}")
 
     def stop(self):
         logger.info('Stopping Watchdog Worker')
@@ -1243,11 +1234,7 @@ def debug_queue_status():
     with runtimedata.batch_parse_lock:
         batch_parse_active = runtimedata.batch_parse_in_progress
         batch_parse_time = runtimedata.batch_parse_start_time
-    
-    with runtimedata.batch_queue_processing_lock:
-        batch_queue_active = runtimedata.batch_queue_processing
-        batch_queue_time = runtimedata.batch_queue_processing_start_time
-    
+
     return jsonify({
         'parsing': {
             'count': len(parsing_items),
@@ -1264,8 +1251,6 @@ def debug_queue_status():
         'flags': {
             'batch_parse_in_progress': batch_parse_active,
             'batch_parse_elapsed': time.time() - batch_parse_time if batch_parse_time else None,
-            'batch_queue_processing': batch_queue_active,
-            'batch_queue_elapsed': time.time() - batch_queue_time if batch_queue_time else None
         }
     })
 
@@ -1541,36 +1526,6 @@ def main():
 
         logger.info("All workers started and registered")
 
-    def restart_workers():
-        """Soft restart of worker threads - keeps web server running"""
-        from .runtimedata import kill_all_workers
-        logger.warning("⚠️ SOFT RESTART: Restarting worker threads due to consecutive download failures")
-        logger.info("Web server will remain available during worker restart")
-        
-        try:
-            # Stop all workers
-            kill_all_workers()
-            
-            # Wait a moment for cleanup
-            time.sleep(1)
-            
-            # Restart workers
-            start_workers()
-            
-            logger.info("✅ Worker threads successfully restarted")
-        except Exception as e:
-            logger.error(f"Failed to restart workers: {e}")
-            logger.error("Attempting hard restart as fallback...")
-            trigger_hard_restart("soft restart failed")
-    
-    def watchdog_hard_restart():
-        """Hard restart triggered by watchdog for stuck system"""
-        trigger_hard_restart("watchdog detected stuck flags (30s timeout)")
-
-    # Register the restart callbacks
-    set_worker_restart_callback(restart_workers)  # Soft restart for failure threshold
-    set_watchdog_restart_callback(watchdog_hard_restart)  # Hard restart for stuck flags
-
     # Start initial workers
     start_workers()
 
@@ -1614,29 +1569,42 @@ def main():
     cached_file_txt = os.path.join(cache_dir(), 'cached_download_queue.txt')
     
     if os.path.isfile(cached_file_json):
-        import json
-        logger.info(f'Found cached download queue at {cached_file_json}, restoring items with metadata...')
+        logger.info(f'Found cached download queue at {cached_file_json}, restoring directly to download queue...')
         try:
             with open(cached_file_json, 'r') as file:
                 cached_items = json.load(file)
-            
-            # Add items back to parsing queue with preserved metadata
+
             from .utils import format_local_id
-            for item_data in cached_items:
-                local_id = format_local_id(item_data.get('item_id'))
-                with parsing_lock:
-                    parsing[item_data.get('item_id')] = {
-                        'item_url': item_data.get('item_url'),
-                        'item_service': item_data.get('item_service'),
-                        'item_type': item_data.get('item_type'),
-                        'item_id': item_data.get('item_id'),
+            restored = 0
+            with download_queue_lock:
+                for item_data in cached_items:
+                    item_id = item_data.get('item_id')
+                    if not item_id:
+                        continue
+                    local_id = format_local_id(item_id)
+                    download_queue[local_id] = {
+                        'local_id': local_id,
+                        'available': True,
+                        'item_service': item_data.get('item_service', ''),
+                        'item_type': item_data.get('item_type', 'track'),
+                        'item_id': item_id,
+                        'item_status': 'Waiting',
+                        'file_path': None,
+                        'item_name': item_data.get('item_name') or f"Track {item_data.get('playlist_number', '?')}",
+                        'item_by': item_data.get('item_by', ''),
                         'parent_category': item_data.get('parent_category'),
                         'playlist_name': item_data.get('playlist_name'),
                         'playlist_by': item_data.get('playlist_by'),
                         'playlist_number': item_data.get('playlist_number'),
-                        'playlist_total': item_data.get('playlist_total')
+                        'playlist_total': item_data.get('playlist_total'),
+                        'item_url': item_data.get('item_url', ''),
+                        'item_thumbnail': '',
+                        'progress': 0,
+                        'last_update_time': time.time(),
+                        'needs_metadata_fetch': True,
                     }
-            logger.info(f'Restored {len(cached_items)} items from cached queue')
+                    restored += 1
+            logger.info(f'Restored {restored} items directly to download queue (metadata will be fetched on demand)')
             os.remove(cached_file_json)
         except Exception as e:
             logger.error(f'Failed to restore cached queue from JSON: {e}')

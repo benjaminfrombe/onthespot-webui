@@ -43,11 +43,6 @@ batch_parse_in_progress = False
 batch_parse_lock = Lock()
 batch_parse_start_time = None  # Track when flag was set
 
-# Batch queue processing state (when QueueWorker is adding many items to download queue)
-batch_queue_processing = False
-batch_queue_processing_lock = Lock()
-batch_queue_processing_start_time = None  # Track when flag was set
-
 # Timeout for batch operations (in seconds)
 # Increased to allow Spotify rate limit retries to complete (retry-after can be 40-60s)
 BATCH_OPERATION_TIMEOUT = 90
@@ -55,13 +50,6 @@ BATCH_OPERATION_TIMEOUT = 90
 # Worker management
 worker_threads = []
 worker_threads_lock = Lock()
-worker_restart_callback = None  # Function to call to restart workers (soft restart)
-watchdog_restart_callback = None  # Function to call for hard restart when stuck
-worker_restart_lock = Lock()  # Prevent multiple simultaneous restarts
-worker_restart_in_progress = False
-account_consecutive_failures = {}  # Track failures per account index
-consecutive_failures_lock = Lock()
-MAX_FAILURE_TRACKING_SIZE = 100  # Prevent unbounded growth
 
 init_tray = False
 
@@ -191,148 +179,6 @@ def kill_all_workers():
     logger_.info(f"Pending queue has {pending_count_after} items after worker restart - these will be processed by new workers")
 
 
-def increment_failure_count(account_index=None):
-    """Increment consecutive failure counter for an account and trigger restart if threshold reached"""
-    global account_consecutive_failures, worker_restart_callback
-
-    # Threshold for triggering worker restart (per account)
-    FAILURE_THRESHOLD = 3
-
-    with consecutive_failures_lock:
-        if account_index is None:
-            # If no account specified, increment a global counter
-            account_index = -1
-        
-        # Prevent unbounded growth - cleanup if dict gets too large
-        if len(account_consecutive_failures) > MAX_FAILURE_TRACKING_SIZE:
-            logger_.warning(f"Failure tracking dict size ({len(account_consecutive_failures)}) exceeded limit, clearing old entries")
-            # Keep only entries with high failure counts
-            account_consecutive_failures = {k: v for k, v in account_consecutive_failures.items() if v >= 2}
-        
-        if account_index not in account_consecutive_failures:
-            account_consecutive_failures[account_index] = 0
-        
-        account_consecutive_failures[account_index] += 1
-        current_count = account_consecutive_failures[account_index]
-        
-        # Get account info for logging
-        account_info = f"account {account_index}" if account_index >= 0 else "unknown account"
-        if account_index >= 0 and account_index < len(account_pool):
-            account_uuid = account_pool[account_index].get('uuid', 'unknown')
-            account_info = f"account {account_index} ({account_uuid})"
-
-    if current_count >= FAILURE_THRESHOLD:
-        global worker_restart_in_progress
-        
-        # Check if restart already in progress
-        with worker_restart_lock:
-            if worker_restart_in_progress:
-                logger_.warning(f"Restart already in progress, skipping duplicate restart trigger for {account_info}")
-                return
-            worker_restart_in_progress = True
-        
-        try:
-            logger_.error(f"🚨 CRITICAL: Consecutive failures for {account_info} reached {current_count}, triggering HARD RESTART...")
-
-            # Reset all counters before restart to avoid repeated restarts
-            reset_failure_count()
-
-            # Trigger hard restart if callback is set
-            if watchdog_restart_callback:
-                try:
-                    logger_.error("Executing hard restart callback now...")
-                    watchdog_restart_callback()
-                except Exception as e:
-                    logger_.error(f"Failed to restart workers: {e}\nTraceback: {traceback.format_exc()}")
-            else:
-                logger_.error("No watchdog restart callback registered!")
-        finally:
-            # Clear restart flag after some time
-            import time
-            time.sleep(5)  # Give restart time to complete
-            with worker_restart_lock:
-                worker_restart_in_progress = False
-    else:
-        account_info = f"account {account_index}" if account_index >= 0 else "unknown account"
-        if account_index >= 0 and account_index < len(account_pool):
-            account_uuid = account_pool[account_index].get('uuid', 'unknown')
-            account_info = f"account {account_index} ({account_uuid})"
-        logger_.warning(f"Download failure for {account_info} ({current_count}/{FAILURE_THRESHOLD})")
-
-
-def get_consecutive_failures(account_index=None):
-    """Get current consecutive failure count for an account"""
-    with consecutive_failures_lock:
-        if account_index is None:
-            # Return the maximum failure count across all accounts
-            return max(account_consecutive_failures.values()) if account_consecutive_failures else 0
-        return account_consecutive_failures.get(account_index, 0)
-
-
-def reset_failure_count(account_index=None):
-    """Reset consecutive failure counter (called on successful download)"""
-    global account_consecutive_failures
-
-    with consecutive_failures_lock:
-        if account_index is None:
-            # Reset all accounts
-            if account_consecutive_failures:
-                logger_.debug(f"Resetting all failure counts: {account_consecutive_failures}")
-            account_consecutive_failures.clear()
-        else:
-            # Reset specific account
-            if account_index in account_consecutive_failures and account_consecutive_failures[account_index] > 0:
-                logger_.debug(f"Resetting failure count for account {account_index} from {account_consecutive_failures[account_index]} to 0")
-            account_consecutive_failures[account_index] = 0
-
-
-def set_worker_restart_callback(callback):
-    """Set the callback function to restart workers (soft restart)"""
-    global worker_restart_callback
-    worker_restart_callback = callback
-    logger_.info(f"Worker restart callback registered: {callback.__name__}")
-
-
-def set_watchdog_restart_callback(callback):
-    """Set the callback function for watchdog hard restart"""
-    global watchdog_restart_callback
-    watchdog_restart_callback = callback
-    logger_.info(f"Watchdog restart callback registered: {callback.__name__}")
-
-
-def trigger_worker_restart():
-    """Manually trigger a worker restart (called by watchdog when download is stuck)"""
-    global watchdog_restart_callback, worker_restart_in_progress
-    
-    # Check if restart already in progress
-    with worker_restart_lock:
-        if worker_restart_in_progress:
-            logger_.warning("Restart already in progress, skipping duplicate watchdog trigger")
-            return
-        worker_restart_in_progress = True
-    
-    try:
-        logger_.error("🚨 WATCHDOG: Triggering hard worker restart due to stuck download...")
-        
-        # Reset all failure counters
-        reset_failure_count()
-        
-        # Trigger hard restart if callback is set
-        if watchdog_restart_callback:
-            try:
-                watchdog_restart_callback()
-            except Exception as e:
-                logger_.error(f"Failed to restart workers: {e}")
-        else:
-            logger_.error("No watchdog restart callback registered!")
-    finally:
-        # Clear restart flag after some time
-        import time
-        time.sleep(5)
-        with worker_restart_lock:
-            worker_restart_in_progress = False
-
-
 def set_batch_parse_flag(value):
     """Set batch_parse_in_progress flag with timestamp tracking"""
     import time
@@ -342,52 +188,18 @@ def set_batch_parse_flag(value):
         batch_parse_start_time = time.time() if value else None
 
 
-def set_batch_queue_processing_flag(value):
-    """Set batch_queue_processing flag with timestamp tracking"""
-    import time
-    global batch_queue_processing, batch_queue_processing_start_time
-    with batch_queue_processing_lock:
-        batch_queue_processing = value
-        batch_queue_processing_start_time = time.time() if value else None
-
-
 def check_and_clear_stuck_flags():
-    """Check if batch operation flags are stuck and trigger hard restart if timeout exceeded"""
+    """Check if batch_parse flag is stuck and clear it if timeout exceeded."""
     import time
     global batch_parse_in_progress, batch_parse_start_time
-    global batch_queue_processing, batch_queue_processing_start_time
-    global watchdog_restart_callback
-    
-    should_restart = False
-    
-    # Check batch_parse_in_progress flag
+
     with batch_parse_lock:
         if batch_parse_in_progress and batch_parse_start_time:
             elapsed = time.time() - batch_parse_start_time
             if elapsed > BATCH_OPERATION_TIMEOUT:
-                logger_.error(f"⚠️ STUCK FLAG DETECTED: batch_parse_in_progress has been True for {elapsed:.1f}s (timeout: {BATCH_OPERATION_TIMEOUT}s)")
-                logger_.error("System is unresponsive - triggering HARD RESTART to recover")
+                logger_.error(f"⚠️ STUCK FLAG: batch_parse_in_progress has been True for {elapsed:.1f}s — clearing")
                 batch_parse_in_progress = False
                 batch_parse_start_time = None
-                should_restart = True
-    
-    # Check batch_queue_processing flag
-    with batch_queue_processing_lock:
-        if batch_queue_processing and batch_queue_processing_start_time:
-            elapsed = time.time() - batch_queue_processing_start_time
-            if elapsed > BATCH_OPERATION_TIMEOUT:
-                logger_.error(f"⚠️ STUCK FLAG DETECTED: batch_queue_processing has been True for {elapsed:.1f}s (timeout: {BATCH_OPERATION_TIMEOUT}s)")
-                logger_.error("System is unresponsive - triggering HARD RESTART to recover")
-                batch_queue_processing = False
-                batch_queue_processing_start_time = None
-                should_restart = True
-    
-    # Trigger hard restart if any flag was stuck
-    if should_restart and watchdog_restart_callback:
-        try:
-            logger_.error("🔄 WATCHDOG: Executing hard restart due to stuck flags...")
-            watchdog_restart_callback()
-        except Exception as e:
-            logger_.error(f"Watchdog failed to restart: {e}")
-    
-    return should_restart
+                return True
+
+    return False
