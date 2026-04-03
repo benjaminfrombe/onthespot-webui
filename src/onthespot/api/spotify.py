@@ -2,6 +2,7 @@ import json
 import os
 import re
 import requests
+import struct
 import threading
 import time
 import traceback
@@ -700,7 +701,7 @@ def spotify_re_init_session(account, max_retries=4, force=False):
             logger.info(f"✓ NUCLEAR SESSION RESET SUCCESSFUL for {username} (bitrate: {account['bitrate']})")
             return session
 
-        except (ConnectionRefusedError, ConnectionError, OSError, TimeoutError) as e:
+        except (ConnectionRefusedError, ConnectionError, OSError, TimeoutError, struct.error) as e:
             last_error = e
             error_type = type(e).__name__
             logger.warning(f"Connection error during session creation (attempt {attempt + 1}/{max_retries}): {error_type} - {e}")
@@ -1324,6 +1325,8 @@ def spotify_get_album_tracks_with_metadata(
         "album metadata",
         headers,
         auth_source,
+        wait_for_rate_limit=True,
+        max_retry_after=60,
     )
     if not album_data:
         if auth_source == "app" and not _force_session and not _app_rotated:
@@ -1361,6 +1364,8 @@ def spotify_get_album_tracks_with_metadata(
             headers,
             auth_source,
             skip_cache=False,
+            wait_for_rate_limit=True,
+            max_retry_after=60,
         )
         if resp is None:
             if auth_source == "app" and not _force_session and not _app_rotated:
@@ -1847,6 +1852,30 @@ def spotify_get_track_metadata(token, item_id, _retry=False, album_lock=None):
                     headers,
                     auth_source,
                 )
+    if not track_data and auth_source == "app":
+        logger.warning(
+            "Spotify track metadata failed via app token (market=%s) for %s — retrying with session token",
+            market_param,
+            item_id,
+        )
+        try:
+            session_token_val = token.tokens().get("user-read-email")
+            if session_token_val:
+                session_headers = {"Authorization": f"Bearer {session_token_val}"}
+                track_data = _spotify_make_call_with_headers(
+                    f"{BASE_URL}/tracks?ids={item_id}&market=from_token",
+                    token,
+                    "track metadata (session fallback)",
+                    session_headers,
+                    "session",
+                )
+                if track_data:
+                    headers = session_headers
+                    auth_source = "session"
+                    market_param = "from_token"
+                    logger.info("Session token fallback succeeded for track metadata %s", item_id)
+        except Exception as e:
+            logger.warning("Session token fallback failed for %s: %s", item_id, e)
     if not track_data:
         logger.error(
             "Spotify track metadata request failed (%s, market=%s) for %s",

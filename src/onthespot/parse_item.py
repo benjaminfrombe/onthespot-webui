@@ -12,7 +12,7 @@ from .api.tidal import tidal_get_album_track_ids, tidal_get_artist_album_ids, ti
 from .api.youtube_music import youtube_music_get_channel_track_ids, youtube_music_get_playlist_data
 from .api.generic import generic_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_show_episode_ids
-from .runtimedata import account_pool, get_logger, parsing, download_queue, pending, parsing_lock, pending_lock, download_queue_lock
+from .runtimedata import account_pool, get_logger, parsing, download_queue, pending, parsing_lock, pending_lock, download_queue_lock, system_notifications, system_notifications_lock
 import onthespot.runtimedata as runtimedata
 from .utils import format_local_id, conv_list_format
 from .otsconfig import config
@@ -541,7 +541,17 @@ def parsingworker():
 
                         total_items = len(track_ids)
                         logger.info(f"{current_type} has {total_items} items, adding to pending queue...")
-                        
+
+                        if total_items == 0:
+                            logger.error(f"Parsing returned 0 items for {current_type} {current_id} — metadata fetch failed")
+                            with system_notifications_lock:
+                                system_notifications.append({
+                                    'timestamp': time.time(),
+                                    'message': f'Kon geen tracks ophalen (rate-limited of API fout). Probeer opnieuw.',
+                                    'type': 'error'
+                                })
+                            continue
+
                         for index, track_id in enumerate(track_ids):
                             local_id = format_local_id(track_id)
                             

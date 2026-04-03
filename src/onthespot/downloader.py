@@ -498,6 +498,29 @@ class DownloadWorker:
                 raise RuntimeError(f"Cannot use account {account_idx}: session is stale and reinitialization failed")
 
 
+    def _load_stream_with_timeout(self, token, audio_key, quality, timeout=15):
+        """Wrap content_feeder().load() in a thread with timeout to prevent blocking the worker."""
+        result = [None]
+        error = [None]
+
+        def _load():
+            try:
+                result[0] = token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(quality), False, None)
+            except Exception as e:
+                error[0] = e
+
+        t = threading.Thread(target=_load, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            raise RuntimeError(f"Stream acquisition timed out after {timeout}s (session likely dead)")
+        if error[0] is not None:
+            raise error[0]
+        if result[0] is None:
+            raise RuntimeError("Stream acquisition returned None")
+        return result[0]
+
     def _try_get_spotify_stream(self, item, item_id, item_type, token, quality, tried_accounts=None):
         """
         Try to get a Spotify stream, with fallback to other accounts if one fails.
@@ -525,7 +548,7 @@ class DownloadWorker:
         if current_account_idx is not None and current_account_idx not in tried_accounts:
             for attempt in range(max_retries_per_account):
                 try:
-                    stream = token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(quality), False, None)
+                    stream = self._load_stream_with_timeout(token, audio_key, quality)
                     logger.info(f"Successfully got stream from account index {current_account_idx}")
                     if item_type == "track":
                         account_pool[current_account_idx]['last_track_id'] = item_id
@@ -589,7 +612,7 @@ class DownloadWorker:
                 
                 for attempt in range(max_retries_per_account):
                     try:
-                        stream = fallback_token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(fallback_quality), False, None)
+                        stream = self._load_stream_with_timeout(fallback_token, audio_key, fallback_quality)
                         logger.info(f"Successfully got stream from fallback account index {account_idx}")
                         if item_type == "track":
                             account_pool[account_idx]['last_track_id'] = item_id
@@ -769,7 +792,7 @@ class DownloadWorker:
                 else:
                     max_metadata_retries = config.get("metadata_retry_max_attempts", 3)
                     metadata_retry_delay = config.get("metadata_retry_delay", 2)
-                    metadata_timeout = config.get("metadata_fetch_timeout", 5)
+                    metadata_timeout = config.get("metadata_fetch_timeout", 30)
                     metadata_attempt = 0
                     metadata_failed = False
 
@@ -934,6 +957,8 @@ class DownloadWorker:
                                 )
                                 if item_metadata is _METADATA_TIMEOUT_SENTINEL:
                                     raise RuntimeError("Metadata fetch timed out")
+                                if not item_metadata or not item_metadata.get('title'):
+                                    raise RuntimeError("Metadata fetch returned empty response")
                             break
                         except (Exception, KeyError) as e:
                             metadata_attempt += 1

@@ -421,7 +421,8 @@ class QueueWorker(threading.Thread):
                                             'item_thumbnail': item_metadata["image_url"],
                                             'item_url': item_metadata["item_url"],
                                             'progress': 0,
-                                            'last_update_time': time.time()
+                                            'last_update_time': time.time(),
+                                            'cached_metadata': item_metadata,
                                         }
                                         processed_successfully += 1
                                         _debug_log(f"Added {local_id} to download_queue, total queue size: {len(download_queue)}")
