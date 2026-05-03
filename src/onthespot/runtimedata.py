@@ -6,6 +6,7 @@ import tracemalloc
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 from threading import Lock
+from collections import deque
 from .otsconfig import config
 
 log_formatter = logging.Formatter(
@@ -31,12 +32,36 @@ pending_lock = Lock()
 download_queue_lock = Lock()
 
 # System notifications for web UI
-system_notifications = []
+system_notifications = deque(maxlen=200)
 system_notifications_lock = Lock()
 
 # Album download locks to prevent concurrent downloads from same album
 album_download_locks = {}
 album_download_locks_lock = Lock()
+
+
+def get_or_create_album_lock(album_key, prune_threshold=128):
+    """Get or create the lock for an album_key. Caller does NOT need to hold
+    album_download_locks_lock — this function manages it. When the dict grows
+    past prune_threshold, drops any locks that are currently free
+    (no thread holds them) to avoid unbounded growth."""
+    with album_download_locks_lock:
+        lock = album_download_locks.get(album_key)
+        if lock is None:
+            if len(album_download_locks) >= prune_threshold:
+                stale = []
+                for k, l in album_download_locks.items():
+                    if l.acquire(blocking=False):
+                        try:
+                            stale.append(k)
+                        finally:
+                            l.release()
+                for k in stale:
+                    album_download_locks.pop(k, None)
+            from threading import Lock as _Lock
+            lock = _Lock()
+            album_download_locks[album_key] = lock
+        return lock
 
 # Batch parsing state (for playlists/albums that add multiple items)
 batch_parse_in_progress = False

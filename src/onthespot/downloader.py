@@ -24,7 +24,7 @@ from .api.youtube_music import youtube_music_get_track_metadata
 from .api.crunchyroll import crunchyroll_get_episode_metadata, crunchyroll_get_decryption_key, crunchyroll_get_mpd_info, crunchyroll_close_stream
 from .api.generic import generic_get_track_metadata
 from .otsconfig import config
-from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, album_download_locks, album_download_locks_lock
+from .runtimedata import get_logger, download_queue, download_queue_lock, account_pool, temp_download_path, album_download_locks, album_download_locks_lock, get_or_create_album_lock
 from . import runtimedata
 from .utils import format_item_path, convert_audio_format, embed_metadata, set_music_thumbnail, fix_mp3_metadata, add_to_m3u_file, strip_metadata, convert_video_format
 
@@ -886,10 +886,7 @@ class DownloadWorker:
                                 album_lock_ctx = None
                                 if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
                                     album_key = f"{item_service}:{item.get('parent_id')}"
-                                    with album_download_locks_lock:
-                                        if album_key not in album_download_locks:
-                                            album_download_locks[album_key] = threading.Lock()
-                                        album_lock_ctx = album_download_locks[album_key]
+                                    album_lock_ctx = get_or_create_album_lock(album_key)
                                 
                                 def _fetch_metadata():
                                     if album_lock_ctx:
@@ -938,10 +935,7 @@ class DownloadWorker:
                                 album_lock_ctx = None
                                 if item_service == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
                                     album_key = f"{item_service}:{item.get('parent_id')}"
-                                    with album_download_locks_lock:
-                                        if album_key not in album_download_locks:
-                                            album_download_locks[album_key] = threading.Lock()
-                                        album_lock_ctx = album_download_locks[album_key]
+                                    album_lock_ctx = get_or_create_album_lock(album_key)
                                 
                                 def _fetch_metadata():
                                     if album_lock_ctx:
@@ -1087,10 +1081,7 @@ class DownloadWorker:
                                 # For non-album items, no lock needed
                                 if item.get('parent_category') == 'album' and item.get('parent_id'):
                                     stream_album_key = f"{item_service}:{item.get('parent_id')}"
-                                    with album_download_locks_lock:
-                                        if stream_album_key not in album_download_locks:
-                                            album_download_locks[stream_album_key] = threading.Lock()
-                                        stream_album_lock = album_download_locks[stream_album_key]
+                                    stream_album_lock = get_or_create_album_lock(stream_album_key)
                                     
                                     # Acquire album lock for stream initialization with timeout
                                     logger.debug(f"Reacquiring album lock for stream: {stream_album_key}")

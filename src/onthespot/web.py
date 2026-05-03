@@ -34,7 +34,7 @@ except Exception as e:
 from .downloader import DownloadWorker, RetryWorker
 from .otsconfig import cache_dir, config_dir, config
 from .parse_item import parsingworker, parse_url
-from .runtimedata import get_logger, account_pool, pending, download_queue, download_queue_lock, pending_lock, parsing, parsing_lock, register_worker, system_notifications, system_notifications_lock, album_download_locks, album_download_locks_lock
+from .runtimedata import get_logger, account_pool, pending, download_queue, download_queue_lock, pending_lock, parsing, parsing_lock, register_worker, system_notifications, system_notifications_lock, album_download_locks, album_download_locks_lock, get_or_create_album_lock
 from . import runtimedata
 from .search import get_search_results
 from .utils import format_bytes
@@ -383,10 +383,7 @@ class QueueWorker(threading.Thread):
                                     album_lock_ctx = None
                                     if item['item_service'] == "spotify" and item.get('parent_category') == 'album' and item.get('parent_id'):
                                         album_key = f"{item['item_service']}:{item.get('parent_id')}"
-                                        with album_download_locks_lock:
-                                            if album_key not in album_download_locks:
-                                                album_download_locks[album_key] = threading.Lock()
-                                            album_lock_ctx = album_download_locks[album_key]
+                                        album_lock_ctx = get_or_create_album_lock(album_key)
                                     
                                     if album_lock_ctx:
                                         item_metadata = globals()[f"{item['item_service']}_get_{item['item_type']}_metadata"](token, item['item_id'], album_lock=album_lock_ctx)

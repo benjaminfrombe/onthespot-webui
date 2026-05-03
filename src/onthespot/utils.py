@@ -37,9 +37,12 @@ def _get_endpoint_backoff(url):
 def _set_endpoint_backoff(url, seconds):
     if seconds is None or seconds <= 0:
         return
-    until = time.time() + seconds
+    now = time.time()
+    until = now + seconds
     with _ENDPOINT_BACKOFF_LOCK:
         _ENDPOINT_BACKOFF[url] = until
+        if len(_ENDPOINT_BACKOFF) > 256:
+            _evict_expired_endpoint_backoffs(now)
 
 
 class SSLAdapter(requests.adapters.HTTPAdapter):
@@ -50,6 +53,33 @@ class SSLAdapter(requests.adapters.HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         context = self.ssl_context
         return super().init_poolmanager(*args, ssl_context=context, **kwargs)
+
+
+_HTTP_SESSION = requests.Session()
+_HTTP_SSL_SESSION = None
+_HTTP_SSL_SESSION_LOCK = threading.Lock()
+
+
+def _get_shared_session(use_ssl=False):
+    global _HTTP_SSL_SESSION
+    if not use_ssl:
+        return _HTTP_SESSION
+    if _HTTP_SSL_SESSION is None:
+        with _HTTP_SSL_SESSION_LOCK:
+            if _HTTP_SSL_SESSION is None:
+                ctx = ssl.create_default_context()
+                ctx.verify_mode = ssl.CERT_REQUIRED
+                sess = requests.Session()
+                sess.mount('https://', SSLAdapter(ssl_context=ctx))
+                _HTTP_SSL_SESSION = sess
+    return _HTTP_SSL_SESSION
+
+
+def _evict_expired_endpoint_backoffs(now):
+    # Caller must hold _ENDPOINT_BACKOFF_LOCK
+    expired = [u for u, until in _ENDPOINT_BACKOFF.items() if until <= now]
+    for u in expired:
+        _ENDPOINT_BACKOFF.pop(u, None)
 
 
 def make_call(
@@ -106,12 +136,7 @@ def make_call(
         logger.debug(f'URL "{url}" has cache miss! HASH: {request_key}; Fetching data')
 
     if session is None:
-        session = requests.Session()
-
-    if use_ssl:
-        ctx = ssl.create_default_context()
-        ctx.verify_mode = ssl.CERT_REQUIRED
-        session.mount('https://', SSLAdapter(ssl_context=ctx))
+        session = _get_shared_session(use_ssl=use_ssl)
 
     if max_attempts is None:
         max_attempts = config.get('api_retry_max_attempts', 3)
