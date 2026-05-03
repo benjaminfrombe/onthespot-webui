@@ -278,7 +278,35 @@ def _spotify_get_public_api_headers(token, context, force_rotate=False):
         return {"Authorization": f"Bearer {app_token}"}, "app"
 
     logger.info("Spotify %s using session token.", context)
-    return {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}, "session"
+    access_token = _spotify_get_session_access_token(token, "user-read-email", context)
+    return {"Authorization": f"Bearer {access_token}"}, "session"
+
+
+def _spotify_get_session_access_token(token, scope, context, timeout=None):
+    if timeout is None:
+        timeout = config.get("spotify_session_token_timeout", 6)
+
+    token_result = None
+    token_error = None
+
+    def get_token_with_timeout():
+        nonlocal token_result, token_error
+        try:
+            token_result = token.tokens().get(scope)
+        except Exception as e:
+            token_error = e
+
+    token_thread = threading.Thread(target=get_token_with_timeout, daemon=True)
+    token_thread.start()
+    token_thread.join(timeout=timeout)
+
+    if token_thread.is_alive():
+        raise TimeoutError(f"Spotify {context} session token retrieval timed out after {timeout}s")
+    if token_error:
+        raise token_error
+    if not token_result:
+        raise RuntimeError(f"Spotify {context} session token missing scope {scope}")
+    return token_result
 
 
 def _spotify_make_call_with_headers(
@@ -293,12 +321,50 @@ def _spotify_make_call_with_headers(
     use_ssl=False,
     max_retry_after=None,
     wait_for_rate_limit=False,
+    request_timeout=None,
+    max_attempts=None,
 ):
     refresh_headers = None
+    on_auth_error = None
     if auth_source == "app":
         current_client_id = _spotify_app_token.get("client_id")
         def refresh_headers():
             _backoff_spotify_credential(current_client_id)
+            new_headers, new_source = _spotify_get_public_api_headers(
+                token, context, force_rotate=True
+            )
+            if new_source != "app":
+                return None
+            return new_headers
+        def on_auth_error(response):
+            cur_cid = _spotify_app_token.get("client_id") or current_client_id
+            body = ""
+            try:
+                body = (response.text or "")[:300]
+            except Exception:
+                pass
+            permanent = (
+                response.status_code == 403
+                and "premium subscription required" in body.lower()
+            )
+            if permanent:
+                dead_backoff = config.get("spotify_app_dead_backoff_seconds", 86400)
+                logger.warning(
+                    "Spotify %s app credential client_id=%s appears dead "
+                    "(403 premium required); backing off for %ss.",
+                    context, _mask_value(cur_cid), dead_backoff,
+                )
+                _backoff_spotify_credential(cur_cid, seconds=dead_backoff)
+            else:
+                logger.warning(
+                    "Spotify %s app credential client_id=%s rejected (status=%s); rotating.",
+                    context, _mask_value(cur_cid), response.status_code,
+                )
+                _backoff_spotify_credential(cur_cid)
+            with _spotify_app_token_lock:
+                if _spotify_app_token.get("client_id") == cur_cid:
+                    _spotify_app_token["access_token"] = None
+                    _spotify_app_token["expires_at"] = 0
             new_headers, new_source = _spotify_get_public_api_headers(
                 token, context, force_rotate=True
             )
@@ -346,6 +412,9 @@ def _spotify_make_call_with_headers(
         refresh_headers=refresh_headers,
         max_retry_after=max_retry_after,
         wait_for_rate_limit=wait_for_rate_limit,
+        request_timeout=request_timeout,
+        max_attempts=max_attempts,
+        on_auth_error=on_auth_error,
     )
 
 
@@ -755,12 +824,22 @@ def spotify_warm_session(account, track_id):
         None,
     )
     try:
-        if hasattr(stream, "close"):
+        # LoadedStream's actual socket is at stream.input_stream.stream(); the
+        # .close() / .stream wrappers historically used here are no-ops and
+        # leak the CDN connection. Try the real path first, then fall back.
+        inner = None
+        try:
+            inner = stream.input_stream.stream()
+        except Exception:
+            inner = None
+        if inner is not None and hasattr(inner, "close"):
+            inner.close()
+        elif hasattr(stream, "close"):
             stream.close()
         elif hasattr(stream, "stream") and hasattr(stream.stream, "close"):
             stream.stream.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("spotify_warm_session close failed: %s", e)
     return True
 
 
@@ -1432,7 +1511,11 @@ def spotify_get_search_results(
     if _force_session:
         logger.info("Spotify search forcing session token fallback.")
         try:
-            headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
+            session_timeout = config.get("search_api_request_timeout", 6)
+            access_token = _spotify_get_session_access_token(
+                token, "user-read-email", "search", timeout=session_timeout
+            )
+            headers = {"Authorization": f"Bearer {access_token}"}
             auth_source = "session"
         except (RuntimeError, OSError, ConnectionError, Exception) as e:
             if _retry:
@@ -1472,6 +1555,9 @@ def spotify_get_search_results(
     params['q'] = search_term
     params['type'] = ",".join(c_type for c_type in content_types)
     params['market'] = config.get("spotify_search_market") or "BE"
+    search_timeout = config.get("search_api_request_timeout", 6)
+    search_attempts = config.get("search_api_max_attempts", 1)
+    search_retry_after = config.get("search_rate_limit_max_retry_after", 8)
     logger.info(
         "Spotify search request auth_source=%s types=%s limit=%s",
         auth_source,
@@ -1487,8 +1573,10 @@ def spotify_get_search_results(
         auth_source,
         params=params,
         skip_cache=True,
-        max_retry_after=90 if auth_source == "session" else None,
+        max_retry_after=search_retry_after if auth_source == "session" else None,
         wait_for_rate_limit=(auth_source == "session"),
+        request_timeout=search_timeout,
+        max_attempts=search_attempts,
     )
     if data is None:
         if auth_source == "app" and not _force_session and not _app_rotated:
@@ -1506,6 +1594,8 @@ def spotify_get_search_results(
                         rotated_source,
                         params=params,
                         skip_cache=True,
+                        request_timeout=search_timeout,
+                        max_attempts=search_attempts,
                     )
                     if data is not None:
                         auth_source = "app"

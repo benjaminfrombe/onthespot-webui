@@ -63,6 +63,9 @@ def make_call(
     refresh_headers=None,
     max_retry_after=None,
     wait_for_rate_limit=False,
+    request_timeout=None,
+    max_attempts=None,
+    on_auth_error=None,
 ):
     if max_retry_after is None:
         max_retry_after = config.get('api_retry_max_retry_after', 10)
@@ -110,9 +113,11 @@ def make_call(
         ctx.verify_mode = ssl.CERT_REQUIRED
         session.mount('https://', SSLAdapter(ssl_context=ctx))
 
-    max_attempts = config.get('api_retry_max_attempts', 3)
+    if max_attempts is None:
+        max_attempts = config.get('api_retry_max_attempts', 3)
     default_delay = config.get('api_retry_default_delay', 1)
-    request_timeout = 30  # 30 second timeout for API calls
+    if request_timeout is None:
+        request_timeout = config.get('api_request_timeout', 30)
 
     for attempt in range(max_attempts):
         try:
@@ -177,6 +182,18 @@ def make_call(
             )
             return None
 
+        if response.status_code in (401, 403) and on_auth_error is not None:
+            try:
+                rotated_headers = on_auth_error(response)
+            except Exception as e:
+                logger.warning(f"on_auth_error callback raised for {url}: {e}")
+                rotated_headers = None
+            if rotated_headers:
+                headers = rotated_headers
+                logger.warning(
+                    f"Auth error {response.status_code} for {url}; rotated credentials and retrying."
+                )
+                continue
         logger.info(f"Request status error {response.status_code}: {url}")
         return None
 
