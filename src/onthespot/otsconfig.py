@@ -122,6 +122,13 @@ class Config:
             "download_stall_timeout": 5, # Seconds of no progress before reconnecting and restarting download
             "api_retry_max_attempts": 3, # Max retries on API rate limit (429)
             "api_retry_default_delay": 1, # Default delay (seconds) when Retry-After is missing
+            "api_request_timeout": 30, # Default HTTP API request timeout in seconds
+            "search_api_request_timeout": 6, # HTTP/token timeout for search requests
+            "search_api_max_attempts": 1, # Search should fail fast instead of blocking the UI
+            "search_rate_limit_max_retry_after": 8, # Max seconds search waits on rate-limit responses
+            "spotify_session_token_timeout": 6, # Max seconds to wait for librespot token retrieval
+            "watchdog_connecting_stuck_timeout": 45, # Seconds before stuck Connecting/Reconnecting items are failed
+            "watchdog_downloading_stuck_timeout": 90, # Seconds before stuck Downloading items are failed
             "spotify_client_backoff_seconds": 3600, # Cooldown (seconds) for rate-limited Spotify app credentials
 
             # Spotify Settings

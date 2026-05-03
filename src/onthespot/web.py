@@ -491,7 +491,8 @@ class WatchdogWorker(threading.Thread):
 
     def run(self):
         logger.info('WatchdogWorker started')
-        stuck_timeout = 60  # Mark download Failed after 60s without progress
+        connecting_stuck_timeout = config.get("watchdog_connecting_stuck_timeout", 45)
+        downloading_stuck_timeout = config.get("watchdog_downloading_stuck_timeout", 90)
         check_interval = 15  # Check every 15 seconds
 
         while self.is_running:
@@ -512,13 +513,18 @@ class WatchdogWorker(threading.Thread):
                     current_time = time.time()
                     stuck_items = []
                     for local_id, item in download_queue.items():
-                        if item['item_status'] == 'Downloading':
-                            last_update = item.get('last_update_time', 0)
-                            if last_update > 0 and current_time - last_update > stuck_timeout:
-                                stuck_items.append((local_id, item.get('item_name', 'Unknown')))
-                    for local_id, name in stuck_items:
+                        status = item.get('item_status')
+                        last_update = item.get('last_update_time', 0)
+                        if last_update <= 0:
+                            continue
+                        elapsed = current_time - last_update
+                        if status in ('Connecting', 'Reconnecting') and elapsed > connecting_stuck_timeout:
+                            stuck_items.append((local_id, item.get('item_name', 'Unknown'), status))
+                        elif status == 'Downloading' and elapsed > downloading_stuck_timeout:
+                            stuck_items.append((local_id, item.get('item_name', 'Unknown'), status))
+                    for local_id, name, status in stuck_items:
                         elapsed = int(current_time - download_queue[local_id].get('last_update_time', current_time))
-                        logger.error(f"⚠️ WATCHDOG: '{name}' stuck for {elapsed}s — marking Failed for retry")
+                        logger.error(f"WATCHDOG_RECOVERABLE_STREAM_STALL: '{name}' stuck in {status} for {elapsed}s; marking Failed for retry")
                         download_queue[local_id]['item_status'] = 'Failed'
                         download_queue[local_id]['available'] = True
                 finally:
